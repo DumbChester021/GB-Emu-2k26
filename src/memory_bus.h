@@ -3,8 +3,11 @@
 #include <array>
 #include <cstdint>
 #include <string>
+
+class SaveState;
 #include "timer.h"
 #include "ppu.h"
+#include "joypad.h"
 
 class Cartridge;
 
@@ -30,9 +33,17 @@ public:
     // OAM DMA query
     bool isDmaActive() const { return dmaActive_; }
 
+    // Save state serialization
+    void serialize(SaveState& ss) const;
+    void deserialize(SaveState& ss);
+
     // PPU accessor
     PPU& ppu() { return ppu_; }
     const PPU& ppu() const { return ppu_; }
+
+    // Joypad accessor
+    Joypad& joypad() { return joypad_; }
+    const Joypad& joypad() const { return joypad_; }
 
 private:
     Cartridge* cart_ = nullptr;
@@ -47,6 +58,9 @@ private:
 
     // ── PPU subsystem ───────────────────────────────────────────────
     PPU ppu_;
+
+    // ── Joypad subsystem ────────────────────────────────────────────
+    Joypad joypad_;
 
     // Work RAM: C000–DFFF (8 KB)
     std::array<uint8_t, 0x2000> wram_{};

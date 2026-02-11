@@ -8,6 +8,7 @@
 #include "cpu.h"
 #include "file_dialog.h"
 #include "memory_bus.h"
+#include "save_state.h"
 
 // Game Boy DMG native resolution
 constexpr int GB_WIDTH  = 160;
@@ -101,6 +102,9 @@ int runEmulator(const std::string& romPath) {
 
     cartridge->printHeader();
 
+    // ── Load battery save (SRAM persistence) ─────────────────────────
+    cartridge->loadBatterySave();
+
     // ── Emulation core ───────────────────────────────────────────────
     MemoryBus bus;
     bus.init();
@@ -179,11 +183,62 @@ int runEmulator(const std::string& romPath) {
                     running = false;
                     break;
                 case SDL_KEYDOWN:
-                    if (event.key.keysym.sym == SDLK_ESCAPE)
-                        running = false;
+                    switch (event.key.keysym.sym) {
+                        case SDLK_ESCAPE:
+                            running = false;
+                            break;
+                        case SDLK_F5: {
+                            // ── Save state (slot 1) ─────────────────
+                            SaveState ss;
+                            cpu.serialize(ss);
+                            bus.serialize(ss);
+                            cartridge->serialize(ss);
+                            std::string path = cartridge->saveStatePath(1);
+                            if (ss.saveToFile(path)) {
+                                std::printf("State saved: %s (%zu bytes)\n",
+                                            path.c_str(), ss.size());
+                            } else {
+                                std::fprintf(stderr, "Failed to save state!\n");
+                            }
+                            break;
+                        }
+                        case SDLK_F9: {
+                            // ── Load state (slot 1) ─────────────────
+                            std::string path = cartridge->saveStatePath(1);
+                            SaveState ss;
+                            if (ss.loadFromFile(path)) {
+                                cpu.deserialize(ss);
+                                bus.deserialize(ss);
+                                cartridge->deserialize(ss);
+                                if (ss.hasError()) {
+                                    std::fprintf(stderr, "State load error: data truncated\n");
+                                } else {
+                                    std::printf("State loaded: %s\n", path.c_str());
+                                }
+                            } else {
+                                std::fprintf(stderr, "No save state found: %s\n",
+                                             path.c_str());
+                            }
+                            break;
+                        }
+                        default:
+                            break;
+                    }
                     break;
             }
         }
+
+        // --- Joypad input (polled per frame) ---
+        const uint8_t* keys = SDL_GetKeyboardState(nullptr);
+        auto& joy = bus.joypad();
+        joy.setButton(Joypad::Button::Right,  keys[SDL_SCANCODE_RIGHT]);
+        joy.setButton(Joypad::Button::Left,   keys[SDL_SCANCODE_LEFT]);
+        joy.setButton(Joypad::Button::Up,     keys[SDL_SCANCODE_UP]);
+        joy.setButton(Joypad::Button::Down,   keys[SDL_SCANCODE_DOWN]);
+        joy.setButton(Joypad::Button::A,      keys[SDL_SCANCODE_Z]);
+        joy.setButton(Joypad::Button::B,      keys[SDL_SCANCODE_X]);
+        joy.setButton(Joypad::Button::Select, keys[SDL_SCANCODE_BACKSPACE]);
+        joy.setButton(Joypad::Button::Start,  keys[SDL_SCANCODE_RETURN]);
 
         // --- Update / Emulation tick ---
         // Run one full frame worth of T-cycles (70224 = 154 scanlines × 456 dots)
@@ -223,7 +278,15 @@ int runEmulator(const std::string& romPath) {
             SDL_RenderClear(renderer);
             SDL_RenderCopy(renderer, framebuffer, nullptr, nullptr);
             SDL_RenderPresent(renderer);
+
+            // --- Dirty-flag battery save (flush after idle) ---
+            cartridge->tickBatterySave();
         }
+    }
+
+    // --- Battery save on exit (only if dirty) ---
+    if (cartridge->isSramDirty()) {
+        cartridge->writeBatterySave();
     }
 
     // --- Cleanup ---

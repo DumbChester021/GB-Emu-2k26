@@ -1,9 +1,12 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <memory>
 #include <vector>
+
+class SaveState;
 
 // ═══════════════════════════════════════════════════════════════════════
 //  MBC base class — handles ROM (0x0000–0x7FFF) and external RAM
@@ -16,6 +19,10 @@ public:
 
     virtual uint8_t read(uint16_t addr) const = 0;
     virtual void    write(uint16_t addr, uint8_t val) = 0;
+
+    // Save state serialization
+    virtual void serialize(SaveState& ss) const = 0;
+    virtual void deserialize(SaveState& ss) = 0;
 
     // Call after the owning Cartridge is moved/copied to fix dangling refs
     void rebindStorage(std::vector<uint8_t>& rom, std::vector<uint8_t>& ram) {
@@ -80,6 +87,9 @@ public:
             ramWrite(addr - 0xA000, val);
         }
     }
+
+    void serialize(SaveState&) const override { /* no banking state */ }
+    void deserialize(SaveState&) override { /* no banking state */ }
 };
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -159,6 +169,9 @@ public:
         }
     }
 
+    void serialize(SaveState& ss) const override;
+    void deserialize(SaveState& ss) override;
+
 private:
     bool ramEnabled_ = false;
     int  bank1_ = 1;   // 5-bit ROM bank (never 0)
@@ -216,6 +229,9 @@ public:
             (*ram_)[(addr - 0xA000) & 0x01FF] = val & 0x0F;
         }
     }
+
+    void serialize(SaveState& ss) const override;
+    void deserialize(SaveState& ss) override;
 
 private:
     bool ramEnabled_ = false;
@@ -282,6 +298,9 @@ public:
         }
     }
 
+    void serialize(SaveState& ss) const override;
+    void deserialize(SaveState& ss) override;
+
 private:
     bool ramRTCEnabled_ = false;
     int  romBank_ = 1;
@@ -338,6 +357,9 @@ public:
             ramWrite(bank * 0x2000 + (addr - 0xA000), val);
         }
     }
+
+    void serialize(SaveState& ss) const override;
+    void deserialize(SaveState& ss) override;
 
 private:
     bool ramEnabled_ = false;

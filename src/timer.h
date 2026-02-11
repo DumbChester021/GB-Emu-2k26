@@ -2,6 +2,8 @@
 
 #include <cstdint>
 
+class SaveState;
+
 // ══════════════════════════════════════════════════════════════════════
 // Hardware-accurate Game Boy DMG Timer
 //
@@ -32,6 +34,10 @@ public:
     // Memory-mapped register access (addr must be 0xFF04–0xFF07).
     uint8_t read(uint16_t addr) const;
     void    write(uint16_t addr, uint8_t val);
+
+    // Save state serialization
+    void serialize(SaveState& ss) const;
+    void deserialize(SaveState& ss);
 
 private:
     // ── Internal state ───────────────────────────────────────────────

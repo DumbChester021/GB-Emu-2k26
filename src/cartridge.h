@@ -9,6 +9,8 @@
 
 #include "mbc.h"
 
+class SaveState;
+
 // ── Nintendo logo expected at $0104–$0133 ────────────────────────────
 static constexpr std::array<uint8_t, 48> NINTENDO_LOGO = {
     0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B,
@@ -97,8 +99,32 @@ public:
     static const char* cgbFlagString(uint8_t flag);
     static const char* destinationString(uint8_t code);
 
+    // ── Save state serialization ─────────────────────────────────────────
+    void serialize(SaveState& ss) const;
+    void deserialize(SaveState& ss);
+
+    // ── Battery save (SRAM persistence) ──────────────────────────────
+    bool hasBattery() const;
+    std::string savFilePath() const;
+    void loadBatterySave();
+    void writeBatterySave();
+
+    // Dirty-flag based flush (SameBoy-style)
+    // Call once per frame. Flushes to disk only when SRAM was written
+    // to and has been idle for FLUSH_DELAY frames (~2 seconds).
+    void tickBatterySave();
+    bool isSramDirty() const { return sramDirty_; }
+
+    // ── Save state file path helper ──────────────────────────────────
+    std::string saveStatePath(int slot) const;
+
 private:
     void parseHeader();
+
+    // ── Battery save dirty tracking ─────────────────────────────────
+    bool sramDirty_      = false;
+    int  sramIdleFrames_ = 0;
+    static constexpr int FLUSH_DELAY = 120; // ~2 seconds at 60fps
 
     void moveFrom(Cartridge&& other) noexcept {
         entryPoint = other.entryPoint;
@@ -120,6 +146,8 @@ private:
         externalRam = std::move(other.externalRam);
         mbc = std::move(other.mbc);
         filepath = std::move(other.filepath);
+        sramDirty_ = other.sramDirty_;
+        sramIdleFrames_ = other.sramIdleFrames_;
         // Rebind MBC to point at OUR vectors (not the moved-from ones)
         if (mbc) mbc->rebindStorage(rom, externalRam);
     }

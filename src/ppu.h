@@ -3,6 +3,8 @@
 #include <array>
 #include <cstdint>
 
+class SaveState;
+
 // ══════════════════════════════════════════════════════════════════════
 // Hardware-Accurate Game Boy DMG PPU — Per-Dot State Machine
 //
@@ -47,6 +49,10 @@ public:
     uint8_t currentMode() const { return mode_; }
     uint8_t currentLY()   const { return ly_; }
     bool    lcdEnabled()  const { return lcdc_ & 0x80; }
+
+    // Save state serialization
+    void serialize(SaveState& ss) const;
+    void deserialize(SaveState& ss);
 
 private:
     // ── PPU modes ───────────────────────────────────────────────────

@@ -15,6 +15,10 @@ gbemu
 # Test ROMs (copyrighted / large)
 test_roms/
 
+# Save files (battery saves + save states)
+*.sav
+*.ss*
+
 # OS
 .DS_Store
 Thumbs.db

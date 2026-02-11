@@ -1,4 +1,5 @@
 #include "timer.h"
+#include "save_state.h"
 
 // ══════════════════════════════════════════════════════════════════════
 // Bit position in sysCounter_ for each TAC clock-select value
@@ -135,4 +136,30 @@ void Timer::write(uint16_t addr, uint8_t val) {
             break;
         }
     }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Save state serialization
+// ══════════════════════════════════════════════════════════════════════
+
+void Timer::serialize(SaveState& ss) const {
+    ss.write<uint16_t>(sysCounter_);
+    ss.write<uint8_t>(tima_);
+    ss.write<uint8_t>(tma_);
+    ss.write<uint8_t>(tac_);
+    ss.writeBool(prevAndResult_);
+    ss.write<int32_t>(overflowCountdown_);
+    ss.writeBool(overflowPending_);
+    ss.writeBool(reloadedThisCycle_);
+}
+
+void Timer::deserialize(SaveState& ss) {
+    sysCounter_ = ss.read<uint16_t>();
+    tima_ = ss.read<uint8_t>();
+    tma_ = ss.read<uint8_t>();
+    tac_ = ss.read<uint8_t>();
+    prevAndResult_ = ss.readBool();
+    overflowCountdown_ = ss.read<int32_t>();
+    overflowPending_ = ss.readBool();
+    reloadedThisCycle_ = ss.readBool();
 }

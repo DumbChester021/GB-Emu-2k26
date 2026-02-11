@@ -4,6 +4,7 @@
 #include <cstdio>
 
 class MemoryBus;
+class SaveState;
 
 // ── Flag bit positions in F register ─────────────────────────────────
 namespace Flag {
@@ -29,6 +30,10 @@ public:
 
     // Total T-cycles elapsed
     uint64_t totalCycles() const { return totalCycles_; }
+
+    // Save state serialization
+    void serialize(SaveState& ss) const;
+    void deserialize(SaveState& ss);
 
     // ── Registers ────────────────────────────────────────────────────
     // Little-endian: on x86/ARM, low byte is at lower address

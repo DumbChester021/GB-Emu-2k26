@@ -532,5 +532,137 @@ uint8_t Cartridge::read(uint16_t addr) const {
 }
 
 void Cartridge::write(uint16_t addr, uint8_t val) {
-    if (mbc) mbc->write(addr, val);
+    if (mbc) {
+        mbc->write(addr, val);
+        // Track SRAM writes for dirty-flag battery save
+        if (addr >= 0xA000 && addr <= 0xBFFF) {
+            sramDirty_ = true;
+            sramIdleFrames_ = 0; // Reset idle counter on every write
+        }
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════════
+//  Save state serialization
+// ═════════════════════════════════════════════════════════════════════
+
+#include "save_state.h"
+
+void Cartridge::serialize(SaveState& ss) const {
+    // External RAM contents
+    ss.write<uint32_t>(static_cast<uint32_t>(externalRam.size()));
+    if (!externalRam.empty()) {
+        ss.writeBytes(externalRam.data(), externalRam.size());
+    }
+    // MBC banking state
+    if (mbc) mbc->serialize(ss);
+}
+
+void Cartridge::deserialize(SaveState& ss) {
+    // External RAM contents
+    uint32_t ramSize = ss.read<uint32_t>();
+    if (ramSize == externalRam.size() && ramSize > 0) {
+        ss.readBytes(externalRam.data(), ramSize);
+    } else if (ramSize > 0) {
+        // Size mismatch — skip the data
+        for (uint32_t i = 0; i < ramSize; i++) ss.read<uint8_t>();
+    }
+    // MBC banking state
+    if (mbc) mbc->deserialize(ss);
+}
+
+// ═════════════════════════════════════════════════════════════════════
+//  Battery save (SRAM persistence)
+// ═════════════════════════════════════════════════════════════════════
+
+bool Cartridge::hasBattery() const {
+    switch (cartridgeType) {
+        case 0x03: // MBC1+RAM+BATTERY
+        case 0x06: // MBC2+BATTERY
+        case 0x09: // ROM+RAM+BATTERY
+        case 0x0D: // MMM01+RAM+BATTERY
+        case 0x0F: // MBC3+TIMER+BATTERY
+        case 0x10: // MBC3+TIMER+RAM+BATTERY
+        case 0x13: // MBC3+RAM+BATTERY
+        case 0x1B: // MBC5+RAM+BATTERY
+        case 0x1E: // MBC5+RUMBLE+RAM+BATTERY
+        case 0xFF: // HuC1+RAM+BATTERY
+            return true;
+        default:
+            return false;
+    }
+}
+
+std::string Cartridge::savFilePath() const {
+    if (filepath.empty()) return "";
+    // Replace extension with .sav
+    size_t dot = filepath.rfind('.');
+    if (dot != std::string::npos) {
+        return filepath.substr(0, dot) + ".sav";
+    }
+    return filepath + ".sav";
+}
+
+void Cartridge::loadBatterySave() {
+    if (!hasBattery() || externalRam.empty()) return;
+
+    std::string path = savFilePath();
+    FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return; // No save file yet — that's fine
+
+    // Get file size
+    std::fseek(f, 0, SEEK_END);
+    long fileSize = std::ftell(f);
+    std::fseek(f, 0, SEEK_SET);
+
+    if (fileSize <= 0) {
+        std::fclose(f);
+        return;
+    }
+
+    // Read up to the external RAM size
+    size_t toRead = std::min(static_cast<size_t>(fileSize), externalRam.size());
+    std::fread(externalRam.data(), 1, toRead, f);
+    std::fclose(f);
+
+    std::printf("Battery save loaded: %s (%zu bytes)\n", path.c_str(), toRead);
+}
+
+void Cartridge::writeBatterySave() {
+    if (!hasBattery() || externalRam.empty()) return;
+
+    std::string path = savFilePath();
+    FILE* f = std::fopen(path.c_str(), "wb");
+    if (!f) {
+        std::fprintf(stderr, "Failed to write battery save: %s\n", path.c_str());
+        return;
+    }
+
+    std::fwrite(externalRam.data(), 1, externalRam.size(), f);
+    std::fclose(f);
+
+    sramDirty_ = false;
+    sramIdleFrames_ = 0;
+
+    std::printf("Battery save written: %s (%zu bytes)\n", path.c_str(), externalRam.size());
+}
+
+void Cartridge::tickBatterySave() {
+    if (!sramDirty_ || !hasBattery()) return;
+
+    sramIdleFrames_++;
+    if (sramIdleFrames_ >= FLUSH_DELAY) {
+        writeBatterySave();
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════════
+//  Save state file path helper
+// ═════════════════════════════════════════════════════════════════════
+
+std::string Cartridge::saveStatePath(int slot) const {
+    if (filepath.empty()) return "";
+    size_t dot = filepath.rfind('.');
+    std::string base = (dot != std::string::npos) ? filepath.substr(0, dot) : filepath;
+    return base + ".ss" + std::to_string(slot);
 }

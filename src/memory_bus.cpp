@@ -12,6 +12,8 @@ void MemoryBus::init() {
     timer_.connectIF(&io_[0x0F]);
     // Wire up the PPU's IF register pointer
     ppu_.connectIF(&io_[0x0F]);
+    // Wire up the joypad's IF register pointer
+    joypad_.connectIF(&io_[0x0F]);
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -180,6 +182,11 @@ uint8_t MemoryBus::read(uint16_t addr) const {
     if (addr < 0xFF80) {
         uint8_t reg = addr - 0xFF00;
 
+        // Joypad register (FF00) is handled by the Joypad subsystem
+        if (addr == 0xFF00) {
+            return joypad_.readP1();
+        }
+
         // Timer registers are handled by the Timer subsystem
         if (addr >= 0xFF04 && addr <= 0xFF07) {
             return timer_.read(addr);
@@ -255,6 +262,12 @@ void MemoryBus::write(uint16_t addr, uint8_t val) {
     if (addr < 0xFF80) {
         uint8_t reg = addr - 0xFF00;
 
+        // Joypad register (FF00) is handled by the Joypad subsystem
+        if (addr == 0xFF00) {
+            joypad_.writeP1(val);
+            return;
+        }
+
         // Timer registers are handled by the Timer subsystem
         if (addr >= 0xFF04 && addr <= 0xFF07) {
             timer_.write(addr, val);
@@ -293,9 +306,6 @@ void MemoryBus::write(uint16_t addr, uint8_t val) {
 
         // ── Hardware-accurate write masks for specific registers ──────
         switch (reg) {
-            case 0x00: // P1/Joypad: only bits 4-5 (column select) writable
-                io_[0x00] = (io_[0x00] & 0xCF) | (val & 0x30);
-                return;
             case 0x26: // NR52: only bit 7 (master enable) is writable
                 io_[0x26] = (io_[0x26] & 0x7F) | (val & 0x80);
                 return;
