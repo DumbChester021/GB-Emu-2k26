@@ -1,0 +1,23 @@
+# Build
+build/
+cmake-build-*/
+*.o
+*.a
+gbemu
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Test ROMs (copyrighted / large)
+test_roms/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Gemini artifacts
+.gemini/
