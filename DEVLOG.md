@@ -102,7 +102,7 @@ A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2 for disp
 
 ### Mooneye Test Suite (mts-20240926) — As of 2026-02-13
 
-#### PPU Tests: **11/12 PASSING** ✅
+#### PPU Tests: **12/12 PASSING** ✅
 | Test | Status | Notes |
 |------|--------|-------|
 | `hblank_ly_scx_timing-GS` | ✅ PASS | Fixed by pre-OAM transition delay |
@@ -115,7 +115,7 @@ A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2 for disp
 | `lcdon_timing-GS` | ✅ PASS | Fixed by LCD enable timing (Fix #6) |
 | `lcdon_write_timing-GS` | ✅ PASS | Fixed by LCD enable timing (Fix #6) |
 | `stat_irq_blocking` | ✅ PASS | |
-| `stat_lyc_onoff` | ❌ FAIL | LYC comparison with LCD toggle |
+| `stat_lyc_onoff` | ✅ PASS | Fixed by STAT IRQ line LCD toggle fix |
 | `vblank_stat_intr-GS` | ✅ PASS | |
 
 #### Timer Tests: **12/13 PASSING** ✅
@@ -127,8 +127,8 @@ A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2 for disp
 #### MBC1 Tests: **13/13 PASSING** ✅
 All MBC1 emulator-only tests pass.
 
-#### Acceptance Root: **31/41 PASSING**
-- 10 failures: `boot_div`, `boot_hwio`, `boot_regs` (SGB/DMG0/MGB variants)
+#### Acceptance Root: **31/33 DMG-ABC PASSING** (excludes SGB/DMG0/MGB variants)
+- 2 failures: `boot_div-dmgABCmgb`, `boot_hwio-dmgABCmgb`
 
 ---
 
@@ -300,14 +300,35 @@ dmaRestarting_ = false;
 
 ---
 
+### Fix 7: STAT IRQ Line LCD Toggle (`stat_lyc_onoff`)
+
+**Problem:** When the LCD was toggled off and back on, a spurious STAT interrupt could fire even when the LYC coincidence flag didn't actually change state. The test checks all four combinations: coincidence true→false, true→true, false→false, false→true during LCD toggle. Only the last case (false→true) should fire an interrupt.
+
+**Root Cause:** In `tick()`, when the LCD was off, `statIrqLine_` was unconditionally set to `false` on every tick. When the LCD was re-enabled and the retained coincidence flag caused `updateStatIRQ()` to compute `line = true`, it always detected a rising edge (false→true) — even when the coincidence flag had been set the entire time (true→true case).
+
+**Fix:** Two changes:
+1. Removed `statIrqLine_ = false` from the LCD-off tick path — the line state is now frozen
+2. In `writeReg()` when LCD turns off, set `statIrqLine_` directly based on the retained coincidence flag: `(stat_ & 0x40) && (stat_ & 0x04)`. Mode sources are inactive when the PPU is stopped, so only LYC coincidence contributes.
+
+```cpp
+// In writeReg (FF40), LCD turning off:
+statIrqLine_ = ((stat_ & 0x40) && (stat_ & 0x04));
+
+// In tick(), LCD off path:
+// statIrqLine_ = false;  ← REMOVED
+```
+
+**Impact:** Fixed `stat_lyc_onoff`. PPU score: 11/12 → **12/12 (perfect)**. Zero regressions.
+
+**Files:** `ppu.cpp` (`tick()` LCD-off path, `writeReg()` LCDC handler)
+
+---
+
 ## Known Issues & Remaining Work
 
-### PPU Failures (1 remaining)
+### PPU Failures (0 remaining)
 
-#### 1. `stat_lyc_onoff` — LYC with LCD toggle
-- **What:** Tests LYC coincidence behavior when LCD is turned off and on
-- **Why:** When LCD is disabled, LY resets to 0. The test checks that LYC coincidence flag and interrupt behave correctly around LCD toggle.
-- **Fix:** Ensure that `checkLYC()` and `updateStatIRQ()` are called correctly when LCDC bit 7 changes.
+All 12/12 PPU tests now pass. ✅
 
 ### Other Failures
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ══════════════════════════════════════════════════════════════════════════
-#  Comprehensive Mooneye Acceptance Test Runner (DMG only, no PPU/Sound)
+#  Comprehensive Mooneye Test Runner — All DMG-ABC Compatible Tests
 # ══════════════════════════════════════════════════════════════════════════
 
 # ── Build ──────────────────────────────────────────────────────────────
@@ -25,7 +25,7 @@ fi
 
 echo ""
 echo "═══════════════════════════════════════════════════"
-echo "  Mooneye Acceptance Tests (DMG, no PPU/Sound)"
+echo "  Mooneye Tests — All DMG-ABC Compatible"
 echo "═══════════════════════════════════════════════════"
 echo ""
 
@@ -176,7 +176,17 @@ section_summary "OAM DMA"
 echo ""
 
 # ═══════════════════════════════════════════════════════════════════════
-#  11. Serial
+#  11. PPU
+# ═══════════════════════════════════════════════════════════════════════
+echo "── PPU ───────────────────────────────────────────"
+for rom in "$TEST_BASE"/ppu/*.gb; do
+    [ -f "$rom" ] && run_test "$rom"
+done
+section_summary "PPU"
+echo ""
+
+# ═══════════════════════════════════════════════════════════════════════
+#  12. Serial
 # ═══════════════════════════════════════════════════════════════════════
 echo "── Serial ──────────────────────────────────────"
 for rom in "$TEST_BASE"/serial/*.gb; do
@@ -186,37 +196,37 @@ section_summary "Serial"
 echo ""
 
 # ═══════════════════════════════════════════════════════════════════════
-#  12. Boot Registers (DMG variants only)
+#  13. Boot Registers (DMG-ABC only)
 # ═══════════════════════════════════════════════════════════════════════
-echo "── Boot Registers (DMG) ──────────────────────────"
-for t in boot_regs-dmg0 boot_regs-dmgABC; do
+echo "── Boot Registers (DMG-ABC) ──────────────────────"
+for t in boot_regs-dmgABC; do
     [ -f "$TEST_BASE/$t.gb" ] && run_test "$TEST_BASE/$t.gb"
 done
-section_summary "Boot Regs (DMG)"
+section_summary "Boot Regs (DMG-ABC)"
 echo ""
 
 # ═══════════════════════════════════════════════════════════════════════
-#  13. Boot DIV (DMG variants only)
+#  14. Boot DIV (DMG-ABC only)
 # ═══════════════════════════════════════════════════════════════════════
-echo "── Boot DIV (DMG) ────────────────────────────────"
-for t in boot_div-dmg0 boot_div-dmgABCmgb; do
+echo "── Boot DIV (DMG-ABC) ────────────────────────────"
+for t in boot_div-dmgABCmgb; do
     [ -f "$TEST_BASE/$t.gb" ] && run_test "$TEST_BASE/$t.gb"
 done
-section_summary "Boot DIV (DMG)"
+section_summary "Boot DIV (DMG-ABC)"
 echo ""
 
 # ═══════════════════════════════════════════════════════════════════════
-#  14. Boot HWIO (DMG variants only)
+#  15. Boot HWIO (DMG-ABC only)
 # ═══════════════════════════════════════════════════════════════════════
-echo "── Boot HWIO (DMG) ───────────────────────────────"
-for t in boot_hwio-dmg0 boot_hwio-dmgABCmgb; do
+echo "── Boot HWIO (DMG-ABC) ───────────────────────────"
+for t in boot_hwio-dmgABCmgb; do
     [ -f "$TEST_BASE/$t.gb" ] && run_test "$TEST_BASE/$t.gb"
 done
-section_summary "Boot HWIO (DMG)"
+section_summary "Boot HWIO (DMG-ABC)"
 echo ""
 
 # ═══════════════════════════════════════════════════════════════════════
-#  15. MBC1 (emulator-only)
+#  16. MBC1 (emulator-only)
 # ═══════════════════════════════════════════════════════════════════════
 echo "── MBC1 ──────────────────────────────────────────"
 for rom in "$EMU_BASE"/mbc1/*.gb; do
@@ -226,7 +236,7 @@ section_summary "MBC1"
 echo ""
 
 # ═══════════════════════════════════════════════════════════════════════
-#  16. MBC2 (emulator-only)
+#  17. MBC2 (emulator-only)
 # ═══════════════════════════════════════════════════════════════════════
 echo "── MBC2 ──────────────────────────────────────────"
 for rom in "$EMU_BASE"/mbc2/*.gb; do
@@ -236,7 +246,7 @@ section_summary "MBC2"
 echo ""
 
 # ═══════════════════════════════════════════════════════════════════════
-#  17. MBC5 (emulator-only)
+#  18. MBC5 (emulator-only)
 # ═══════════════════════════════════════════════════════════════════════
 echo "── MBC5 ──────────────────────────────────────────"
 for rom in "$EMU_BASE"/mbc5/*.gb; do

@@ -1,6 +1,6 @@
 # GB-Emu-2k26 — Gap Analysis for Mooneye Compliance
 
-> **Current Score: 88/97 tests passing** (80/85 acceptance + 8/12 PPU)
+> **Current Score: 89/94 DMG-ABC tests passing**
 > **Target: All Mooneye DMG tests**
 
 ---
@@ -22,7 +22,7 @@
 | MBC5 | 8 | 8 | ✅ Perfect |
 | Interrupts | 2 | 3 | 🟡 1 failing |
 | OAM DMA | 6 | 6 | ✅ Perfect |
-| PPU | 11 | 12 | 🟡 1 failing |
+| PPU | 12 | 12 | ✅ Perfect |
 | Boot Regs (DMG) | 1 | 2 | 🟡 DMG0 variant |
 | Boot DIV (DMG) | 0 | 2 | 🔴 Both failing |
 | Boot HWIO (DMG) | 0 | 2 | 🔴 Both failing |
@@ -84,22 +84,15 @@ The 4-dot pre-OAM transition delay from Priority 3 fixed the CPU-PPU phase align
 
 ---
 
-### 🟡 Priority 5: `stat_lyc_onoff` — LYC with LCD Toggle (MEDIUM IMPACT)
-**Failing test:** `stat_lyc_onoff`
+### ✅ Priority 5: `stat_lyc_onoff` — COMPLETED
+**Fixed test:** `stat_lyc_onoff` (now passing)
 
-**What's missing:**
-When the LCD is disabled (LCDC bit 7 → 0), LY resets to 0. The test checks that:
-- LYC coincidence flag in STAT is updated correctly when LCD is toggled
-- The STAT interrupt fires (or doesn't) at the right time based on LYC=LY comparison during the toggle
+**What was done:**
+Fixed STAT IRQ line state management during LCD toggle. The root cause was `statIrqLine_` being unconditionally reset to `false` during every LCD-off tick in `tick()`. This caused spurious rising edges when the LCD was re-enabled with a retained coincidence flag (flag was already set before LCD off, stayed set after LCD on → no real transition, but false→true edge was detected).
 
-Currently, `checkLYC()` and `updateStatIRQ()` may not be called with the right timing around LCD enable/disable transitions.
+Fix: (1) Removed `statIrqLine_ = false` from the LCD-off tick path. (2) When LCD turns off in `writeReg()`, freeze `statIrqLine_` based on the retained coincidence flag state (`(stat_ & 0x40) && (stat_ & 0x04)`). Mode sources are inactive when the PPU is stopped, so only LYC coincidence contributes.
 
-**Why it matters:**
-- 1 PPU failure
-- Related to Priority 3 (LCD enable/disable handling)
-- Some games check LYC status after toggling LCD
-
-**Difficulty:** Medium — likely a fix within the LCDC write handler in `writeReg()`
+**Difficulty:** Complete
 
 ---
 
@@ -180,14 +173,14 @@ Serial clock alignment after bootrom. The serial transfer shift clock should be 
 | 1 | ~~**OAM DMA bus conflicts**~~ | ✅ all done | ~~Medium~~ | ✅ Completed — all 6 tests pass |
 | 2 | ~~**Sprite mode 3 penalties**~~ | ✅ done | ~~Medium~~ | ✅ Completed — sprite test passes |
 | 3 | ~~**LCD enable timing**~~ | ✅ +3 done | ~~Medium-Hard~~ | ✅ Completed — lcdon + hblank pass |
-| 4 | **STAT LYC on/off** | +1 | Medium | Medium — LCD toggle games |
+| 4 | ~~**STAT LYC on/off**~~ | ✅ done | ~~Medium~~ | ✅ Completed — PPU now 12/12 |
 | 5 | **TIMA write during reload** | +1 | Easy-Medium | Low — rare edge case |
 | 6 | **IE push edge case** | +1 | Medium | Very Low — almost never happens |
 | 7 | **Boot register/DIV/HWIO** | +5 | Medium | Very Low — bootrom-only |
 | 8 | **Serial clock alignment** | +1 | Medium | Very Low — link cable only |
 
 > [!TIP]
-> **Next best bang for the buck**: Item 4 (`stat_lyc_onoff`) is the last remaining PPU failure and likely a fix within the LCDC write handler. Item 5 is the easiest single fix.
+> **Next best bang for the buck**: Item 5 (`tima_write_reloading`) is the easiest single fix. Item 6 (`ie_push`) is the last remaining interrupt failure.
 
 > [!NOTE]
 > **Not listed but also missing**: Audio/APU (no sound at all). This doesn't affect Mooneye tests but is essential for game experience.

@@ -25,8 +25,9 @@ void PPU::tick() {
         // Keep STAT coincidence flag (bit 2) as-is — do NOT clear it
         // Only clear the mode bits
         stat_ = (stat_ & 0xFC);
-        // STAT IRQ line goes low when LCD is off
-        statIrqLine_ = false;
+        // Don't touch statIrqLine_ here — it's frozen at the value
+        // set when LCD was turned off (in writeReg). This prevents
+        // spurious rising edges when LCD is re-enabled.
         lcdWasOff_ = true;
         return;
     }
@@ -627,6 +628,10 @@ void PPU::writeReg(uint16_t addr, uint8_t val) {
                 stat_ = (stat_ & 0xFC);
                 lcdWasOff_ = true;
                 // Coincidence flag is RETAINED (not cleared)
+                // Freeze STAT IRQ line based on retained coincidence flag.
+                // Mode sources are inactive when PPU is stopped.
+                // Set directly (no edge detection) to avoid spurious interrupts.
+                statIrqLine_ = ((stat_ & 0x40) && (stat_ & 0x04));
             } else if (!wasOn && isOn) {
                 lcdWasOff_ = true;
                 firstLineAfterEnable_ = true;
