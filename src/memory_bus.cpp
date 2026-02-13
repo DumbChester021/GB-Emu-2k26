@@ -14,6 +14,8 @@ void MemoryBus::init() {
     ppu_.connectIF(&io_[0x0F]);
     // Wire up the joypad's IF register pointer
     joypad_.connectIF(&io_[0x0F]);
+    // Wire up the APU's IF register pointer
+    apu_.connectIF(&io_[0x0F]);
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -210,6 +212,12 @@ uint8_t MemoryBus::read(uint16_t addr) const {
             return ppu_.readReg(addr);
         }
 
+        // APU registers are handled by the APU subsystem
+        if ((addr >= 0xFF10 && addr <= 0xFF26) ||
+            (addr >= 0xFF30 && addr <= 0xFF3F)) {
+            return apu_.readReg(addr);
+        }
+
         // Apply unused-bit mask: unused bits read as 1
         return io_[reg] | ioReadMask(reg);
     }
@@ -313,6 +321,13 @@ void MemoryBus::write(uint16_t addr, uint8_t val) {
             return;
         }
 
+        // APU registers are handled by the APU subsystem
+        if ((addr >= 0xFF10 && addr <= 0xFF26) ||
+            (addr >= 0xFF30 && addr <= 0xFF3F)) {
+            apu_.writeReg(addr, val);
+            return;
+        }
+
         // Serial transfer: capture output for test ROMs
         if (addr == 0xFF02 && val == 0x81) {
             char c = static_cast<char>(io_[0x01]); // SB = FF01
@@ -328,15 +343,8 @@ void MemoryBus::write(uint16_t addr, uint8_t val) {
             }
         }
 
-        // ── Hardware-accurate write masks for specific registers ──────
-        switch (reg) {
-            case 0x26: // NR52: only bit 7 (master enable) is writable
-                io_[0x26] = (io_[0x26] & 0x7F) | (val & 0x80);
-                return;
-            default:
-                io_[reg] = val;
-                return;
-        }
+        io_[reg] = val;
+        return;
     }
 
     // ── High RAM (0xFF80–0xFFFE) ─────────────────────────────────────
@@ -359,6 +367,9 @@ void MemoryBus::tick() {
 
     // ── PPU subsystem ────────────────────────────────────────────────
     ppu_.tick();
+
+    // ── APU subsystem ────────────────────────────────────────────────
+    apu_.tick();
 
     // ── OAM DMA ──────────────────────────────────────────────────────
     if (dmaActive_) {

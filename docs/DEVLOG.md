@@ -19,31 +19,35 @@
 
 ## Project Overview
 
-A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2 for display. The emulator targets M-cycle (4 T-cycle) accuracy for the CPU and per-dot (1 T-cycle) accuracy for the PPU.
+A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2 for display and audio. The emulator targets M-cycle (4 T-cycle) accuracy for the CPU, per-dot (1 T-cycle) accuracy for the PPU, and T-cycle accuracy for the APU.
 
 ### Goals
 - Pass all relevant Mooneye test suite ROMs for DMG hardware
 - Accurate CPU instruction timing (M-cycle level)
 - Accurate PPU timing (per-dot / T-cycle level with FIFO pixel pipeline)
-- Play commercial Game Boy games correctly
+- Hardware-accurate APU with all 4 audio channels and SDL2 audio output
+- Play commercial Game Boy games correctly (with sound)
 
-### Source Files (~4,700 LOC total)
+### Source Files (~5,800 LOC total)
 | File | LOC | Purpose |
 |------|-----|---------|
+| `apu.cpp` | 697 | APU core: 4 channels, frame sequencer, register I/O, mixing |
 | `ppu.cpp` | 659 | PPU state machine, pixel FIFO, tile fetcher, STAT IRQ |
 | `cartridge.cpp` | 536 | ROM loading, header parsing |
 | `cpu_opcodes.cpp` | 498 | Main opcode handlers (256 opcodes) |
 | `mbc.h` | 451 | MBC1/MBC2/MBC3/MBC5 memory bank controllers |
 | `cpu.cpp` | 407 | CPU core: tick loop, interrupts, bus access |
 | `cpu_tables.cpp` | 388 | Opcode metadata tables |
-| `memory_bus.cpp` | 385 | Bus routing, IO registers, DMA, PPU/timer integration |
+| `memory_bus.cpp` | 395 | Bus routing, IO registers, DMA, subsystem integration |
 | `cpu.h` | 327 | CPU class declaration, registers |
-| `main.cpp` | 271 | SDL2 window, render loop, input |
+| `main.cpp` | 305 | SDL2 window, audio, render loop, input |
 | `ppu.h` | 205 | PPU class declaration, FIFO, sprites, state |
+| `apu_serialize.cpp` | 130 | APU save state serialization |
 | `timer.cpp` | 138 | DIV/TIMA timer with falling-edge detection |
 | `cartridge.h` | 126 | Cartridge class declaration |
+| `apu.h` | 96 | APU class declaration, channel structs, ring buffer |
 | `cpu_cb_opcodes.cpp` | 87 | CB-prefixed opcode handlers |
-| `memory_bus.h` | 79 | MemoryBus class declaration |
+| `memory_bus.h` | 84 | MemoryBus class declaration |
 | `timer.h` | 74 | Timer class declaration |
 | `file_dialog.cpp/h` | 49 | Native file dialog for ROM selection |
 
@@ -82,8 +86,9 @@ A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2 for disp
 ### Memory Bus (`memory_bus.cpp`, `memory_bus.h`)
 - Routes reads/writes to: ROM/MBC, VRAM, WRAM, OAM, IO registers, HRAM
 - PPU registers (FF40-FF4B) delegated to `PPU::readReg()`/`writeReg()`
+- APU registers (FF10-FF26, FF30-FF3F) delegated to `APU::readReg()`/`writeReg()`
 - Timer registers (FF04-FF07) delegated to `Timer`
-- `tick()` advances PPU by 1 dot and timer by 1 T-cycle
+- `tick()` advances PPU by 1 dot, timer by 1 T-cycle, and APU by 1 T-cycle
 - OAM DMA: copies 160 bytes with SameBoy-style bus conflict emulation
   - Per-bus conflict detection: VRAM bus vs MAIN bus
   - Conflicting reads return last DMA-transferred byte (`dmaLastByte_`)
@@ -95,6 +100,22 @@ A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2 for disp
 - Falling-edge detection on internal counter bit for TIMA increment
 - DIV write resets internal 16-bit counter
 - TIMA overflow: 1 M-cycle delay before TMA reload and IF flag
+
+### APU (`apu.cpp`, `apu.h`, `apu_serialize.cpp`)
+- **T-cycle accurate**: `tick()` called once per T-cycle from `MemoryBus::tick()`
+- **4 channels:**
+  - **CH1 (Pulse with Sweep)**: Square wave with frequency sweep, volume envelope, and length counter
+  - **CH2 (Pulse)**: Square wave with volume envelope and length counter (no sweep)
+  - **CH3 (Wave)**: Plays samples from 16-byte wave RAM (32 4-bit samples), with volume shift
+  - **CH4 (Noise)**: LFSR-based noise generator with volume envelope, 15-bit or 7-bit mode
+- **Frame Sequencer**: 512 Hz (8192 T-cycles), 8 steps clocking length counters (steps 0,2,4,6), sweep (steps 2,6), and volume envelopes (step 7)
+- **Register I/O**: Hardware-accurate read masks (unused bits read as 1), write-only registers, DMG-specific edge cases:
+  - Extra length clocking when length enable is newly set on even frame sequencer steps
+  - Sweep negate-to-positive mode change disables channel
+  - Wave RAM access conflicts when CH3 is active
+  - Length counters writable even when APU is powered off (DMG behavior)
+- **Audio Pipeline**: T-cycle accurate → downsample to 44100 Hz → NR50/NR51 stereo mix → high-pass filter (DC offset removal) → lock-free SPSC ring buffer → SDL audio callback
+- **Master Power Control**: NR52 bit 7 enables/disables APU; powering off zeros all registers (wave RAM preserved on DMG)
 
 ---
 
@@ -401,6 +422,10 @@ The test has 4 rounds:
 
 All 12/12 PPU tests now pass. ✅
 
+### APU — ✅ Implemented
+
+Full DMG APU with all 4 channels, frame sequencer, register I/O, stereo mixing, and SDL2 audio output. **Hardware-accurate** with DMG edge cases (sweep negate quirk, extra length clocking, wave RAM conflicts, DAC enable logic).
+
 ### Other Failures
 
 - ~~**`tima_write_reloading`**~~: ✅ Fixed (Fix 8)
@@ -525,6 +550,11 @@ cmake .. && make -j$(nproc)
 for rom in test_roms/mts-20240926-1737-443f6e1/acceptance/ppu/*.gb; do
     timeout 10 ./build/gbemu --test "$rom" 2>/dev/null
 done
+```
+
+### Run All Tests (Comprehensive)
+```bash
+bash run_mooneye_all.sh
 ```
 
 ### Run Full Acceptance Suite

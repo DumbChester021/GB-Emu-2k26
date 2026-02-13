@@ -14,6 +14,7 @@ void MemoryBus::serialize(SaveState& ss) const {
     timer_.serialize(ss);
     ppu_.serialize(ss);
     joypad_.serialize(ss);
+    apu_.serialize(ss);
 
     // Work RAM (8 KB)
     ss.writeBytes(wram_.data(), wram_.size());
@@ -49,6 +50,7 @@ void MemoryBus::deserialize(SaveState& ss) {
     timer_.deserialize(ss);
     ppu_.deserialize(ss);
     joypad_.deserialize(ss);
+    apu_.deserialize(ss);
 
     // Work RAM (8 KB)
     ss.readBytes(wram_.data(), wram_.size());

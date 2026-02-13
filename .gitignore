@@ -14,6 +14,7 @@ gbemu
 
 # Test ROMs (copyrighted / large)
 test_roms/
+bootroms/
 
 # Save files (battery saves + save states)
 *.sav

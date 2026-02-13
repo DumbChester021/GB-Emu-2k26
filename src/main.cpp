@@ -9,6 +9,7 @@
 #include "file_dialog.h"
 #include "memory_bus.h"
 #include "save_state.h"
+#include "apu.h"
 
 // Game Boy DMG native resolution
 constexpr int GB_WIDTH  = 160;
@@ -92,6 +93,35 @@ int runTest(const std::string& romPath) {
     return 2;
 }
 
+// ── SDL Audio callback ───────────────────────────────────────────────
+// Runs on a separate SDL audio thread. Reads from the APU's lock-free
+// ring buffer. Fills silence if the emulator hasn't produced enough.
+static APU* g_apuPtr = nullptr;
+
+static void audioCallback(void* /*userdata*/, Uint8* stream, int len) {
+    auto* out = reinterpret_cast<float*>(stream);
+    int totalFloats = len / static_cast<int>(sizeof(float));
+    int totalSamples = totalFloats / 2;  // stereo
+
+    if (g_apuPtr) {
+        // Read directly from ring buffer
+        APU::StereoSample buf[2048];
+        int toRead = totalSamples < 2048 ? totalSamples : 2048;
+        int got = g_apuPtr->readSamples(buf, toRead);
+
+        for (int i = 0; i < got; i++) {
+            out[i * 2]     = buf[i].left;
+            out[i * 2 + 1] = buf[i].right;
+        }
+        // Fill remainder with silence
+        for (int i = got * 2; i < totalFloats; i++) {
+            out[i] = 0.0f;
+        }
+    } else {
+        std::memset(stream, 0, static_cast<size_t>(len));
+    }
+}
+
 // ── Normal emulation mode ────────────────────────────────────────────
 int runEmulator(const std::string& romPath) {
     auto cartridge = Cartridge::loadFromFile(romPath);
@@ -119,7 +149,7 @@ int runEmulator(const std::string& romPath) {
                cpu.reg.pc, cpu.reg.sp);
 
     // ── SDL initialisation ───────────────────────────────────────────
-    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) != 0) {
         std::fprintf(stderr, "SDL_Init Error: %s\n", SDL_GetError());
         return EXIT_FAILURE;
     }
@@ -171,6 +201,26 @@ int runEmulator(const std::string& romPath) {
 
     // Use nearest-neighbor scaling for that crisp pixel look
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
+
+    // ── SDL Audio setup ─────────────────────────────────────────────
+    g_apuPtr = &bus.apu();
+    SDL_AudioSpec audioSpec;
+    SDL_zero(audioSpec);
+    audioSpec.freq = APU::SAMPLE_RATE;
+    audioSpec.format = AUDIO_F32SYS;
+    audioSpec.channels = 2;
+    audioSpec.samples = 1024;
+    audioSpec.callback = audioCallback;
+    audioSpec.userdata = nullptr;
+
+    SDL_AudioDeviceID audioDevice = SDL_OpenAudioDevice(
+        nullptr, 0, &audioSpec, nullptr, 0);
+    if (audioDevice == 0) {
+        std::fprintf(stderr, "SDL audio open failed: %s (continuing without sound)\n",
+                     SDL_GetError());
+    } else {
+        SDL_PauseAudioDevice(audioDevice, 0);  // Start playback
+    }
 
     bool running = true;
     SDL_Event event;
@@ -289,7 +339,12 @@ int runEmulator(const std::string& romPath) {
         cartridge->writeBatterySave();
     }
 
-    // --- Cleanup ---
+    // ─── Cleanup ───
+    g_apuPtr = nullptr;
+    if (audioDevice != 0) {
+        SDL_PauseAudioDevice(audioDevice, 1);
+        SDL_CloseAudioDevice(audioDevice);
+    }
     SDL_DestroyTexture(framebuffer);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);

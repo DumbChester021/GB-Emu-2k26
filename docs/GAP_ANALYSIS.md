@@ -167,7 +167,7 @@ Serial clock alignment after bootrom. The serial transfer shift clock should be 
 | 8 | **Serial clock alignment** | +1 | Medium | Very Low — link cable only |
 
 > [!TIP]
-> **Next best bang for the buck**: Item 6 (`ie_push`) is the last remaining interrupt failure. Item 7 (boot tests) would fix 5 tests but requires bootrom cycle counting.
+> **All high-priority items are resolved.** Remaining 3 failures are boot/serial edge cases with very low game compatibility impact.
 
 > [!NOTE]
-> **Not listed but also missing**: Audio/APU (no sound at all). This doesn't affect Mooneye tests but is essential for game experience.
+> **APU is now fully implemented**: Hardware-accurate DMG APU with all 4 channels (pulse×2, wave, noise), frame sequencer, stereo mixing, and SDL2 audio output.

@@ -8,6 +8,7 @@ class SaveState;
 #include "timer.h"
 #include "ppu.h"
 #include "joypad.h"
+#include "apu.h"
 
 class Cartridge;
 
@@ -45,6 +46,10 @@ public:
     Joypad& joypad() { return joypad_; }
     const Joypad& joypad() const { return joypad_; }
 
+    // APU accessor
+    APU& apu() { return apu_; }
+    const APU& apu() const { return apu_; }
+
 private:
     Cartridge* cart_ = nullptr;
 
@@ -61,6 +66,9 @@ private:
 
     // ── Joypad subsystem ────────────────────────────────────────────
     Joypad joypad_;
+
+    // ── APU subsystem ───────────────────────────────────────────────
+    APU apu_;
 
     // Work RAM: C000–DFFF (8 KB)
     std::array<uint8_t, 0x2000> wram_{};
