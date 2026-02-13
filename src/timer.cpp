@@ -101,8 +101,13 @@ void Timer::write(uint16_t addr, uint8_t val) {
         }
 
         case 0xFF05: {
-            // Writing to TIMA during the overflow delay window cancels
-            // the pending TMA reload.
+            // Cycle B: If TMA was just loaded into TIMA this cycle,
+            // the CPU's write is ignored — TMA's value wins.
+            if (reloadedThisCycle_) {
+                break;
+            }
+            // Cycle A: Writing to TIMA during the overflow delay window
+            // cancels the pending TMA reload and IF flag.
             if (overflowPending_) {
                 overflowPending_ = false;
             }

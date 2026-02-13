@@ -1,6 +1,6 @@
 # GB-Emu-2k26 — Gap Analysis for Mooneye Compliance
 
-> **Current Score: 89/94 DMG-ABC tests passing**
+> **Current Score: 91/94 DMG-ABC tests passing**
 > **Target: All Mooneye DMG tests**
 
 ---
@@ -16,11 +16,11 @@
 | Call/JP/Ret/Pop/Push/RST | 13 | 13 | ✅ Perfect |
 | ADD SP / LD HL,SP+e | 2 | 2 | ✅ Perfect |
 | DIV Timing | 1 | 1 | ✅ Perfect |
-| Timer | 12 | 13 | 🟡 1 failing |
+| Timer | 13 | 13 | ✅ Perfect |
 | MBC1 | 13 | 13 | ✅ Perfect |
 | MBC2 | 7 | 7 | ✅ Perfect |
 | MBC5 | 8 | 8 | ✅ Perfect |
-| Interrupts | 2 | 3 | 🟡 1 failing |
+| Interrupts | 3 | 3 | ✅ Perfect |
 | OAM DMA | 6 | 6 | ✅ Perfect |
 | PPU | 12 | 12 | ✅ Perfect |
 | Boot Regs (DMG) | 1 | 2 | 🟡 DMG0 variant |
@@ -96,40 +96,27 @@ Fix: (1) Removed `statIrqLine_ = false` from the LCD-off tick path. (2) When LCD
 
 ---
 
-### 🟡 Priority 6: `tima_write_reloading` — Timer Edge Case (LOW-MEDIUM IMPACT)
-**Failing test:** `tima_write_reloading`
+### ✅ Priority 6: `tima_write_reloading` — COMPLETED
+**Fixed test:** `tima_write_reloading` (now passing)
 
-**What's missing:**
-Writing to TIMA (FF05) during the exact T-cycle when TMA is being reloaded into TIMA after overflow has a specific behavior:
-- If the write happens **on the same cycle as the reload**, the written value should be **overwritten** by TMA
-- If the write happens **one cycle before the reload**, the reload should be **cancelled**
+**What was done:**
+Fixed TIMA write behavior during the TMA reload cycle. The DMG timer has two distinct behavioral windows after TIMA overflow:
+- **Cycle A** (overflow pending, before reload): Writing TIMA cancels the pending reload and IF flag
+- **Cycle B** (TMA→TIMA reload cycle): Writing TIMA is ignored — TMA's value wins
 
-Currently, writing to TIMA while `overflowPending_` cancels the reload entirely, but the timing of when the cancel vs. override takes effect may be off by 1 cycle.
+The bug was that `Timer::write()` treated ALL writes during `overflowPending_` as cycle A (cancellation). Added a `reloadedThisCycle_` guard: if the reload already happened this cycle, the CPU write is ignored and TMA keeps its value.
 
-**Why it matters:**
-- 1 timer failure
-- Very edge-case behavior that few games trigger
-- All other 12/13 timer tests pass, so the timer model is very close
-
-**Difficulty:** Easy-Medium — likely a 1-cycle adjustment in the overflow countdown logic in `Timer::tick()` / `Timer::write()`
+**Difficulty:** Complete
 
 ---
 
-### 🟡 Priority 7: `ie_push` — Interrupt Vector Edge Case (LOW IMPACT)
-**Failing test:** `ie_push`
+### ✅ Priority 7: `ie_push` — COMPLETED
+**Fixed test:** `ie_push` (now passing)
 
-**What's missing:**
-This tests the behavior when IE (Interrupt Enable register at 0xFFFF) is modified between the two push cycles of interrupt dispatch. During interrupt handling, the CPU pushes the high byte of PC, then the low byte. If the IE register changes between those two pushes (because the stack pointer happens to point at 0xFFFF), the interrupt vector selected should use the **new** IE value.
+**What was done:**
+Rewrote `handleInterrupts()` to split the two-byte PC push into individual writes and re-read IE between them. After the high byte of PC is pushed, IE is re-read. If the push wrote to 0xFFFF (because SP was 0x0000), the new IE value determines which interrupt is dispatched — or cancels dispatch entirely (PC→0x0000, IF untouched).
 
-Currently, `handleInterrupts()` reads IE once at the start and doesn't re-read between push cycles.
-
-**Why it matters:**
-- 1 interrupt failure
-- Extremely edge-case behavior — only triggers if SP is carefully positioned
-- Very unlikely to affect any commercial game
-- But it IS a real hardware behavior
-
-**Difficulty:** Medium — requires splitting interrupt dispatch to re-check IE between the two push cycles
+**Difficulty:** Complete
 
 ---
 
@@ -174,13 +161,13 @@ Serial clock alignment after bootrom. The serial transfer shift clock should be 
 | 2 | ~~**Sprite mode 3 penalties**~~ | ✅ done | ~~Medium~~ | ✅ Completed — sprite test passes |
 | 3 | ~~**LCD enable timing**~~ | ✅ +3 done | ~~Medium-Hard~~ | ✅ Completed — lcdon + hblank pass |
 | 4 | ~~**STAT LYC on/off**~~ | ✅ done | ~~Medium~~ | ✅ Completed — PPU now 12/12 |
-| 5 | **TIMA write during reload** | +1 | Easy-Medium | Low — rare edge case |
-| 6 | **IE push edge case** | +1 | Medium | Very Low — almost never happens |
+| 5 | ~~**TIMA write during reload**~~ | ✅ done | ~~Easy-Medium~~ | ✅ Completed — timer now 13/13 |
+| 6 | ~~**IE push edge case**~~ | ✅ done | ~~Medium~~ | ✅ Completed — interrupts now 3/3 |
 | 7 | **Boot register/DIV/HWIO** | +5 | Medium | Very Low — bootrom-only |
 | 8 | **Serial clock alignment** | +1 | Medium | Very Low — link cable only |
 
 > [!TIP]
-> **Next best bang for the buck**: Item 5 (`tima_write_reloading`) is the easiest single fix. Item 6 (`ie_push`) is the last remaining interrupt failure.
+> **Next best bang for the buck**: Item 6 (`ie_push`) is the last remaining interrupt failure. Item 7 (boot tests) would fix 5 tests but requires bootrom cycle counting.
 
 > [!NOTE]
 > **Not listed but also missing**: Audio/APU (no sound at all). This doesn't affect Mooneye tests but is essential for game experience.

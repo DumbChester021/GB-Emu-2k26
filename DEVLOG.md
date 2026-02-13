@@ -118,16 +118,16 @@ A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2 for disp
 | `stat_lyc_onoff` | ✅ PASS | Fixed by STAT IRQ line LCD toggle fix |
 | `vblank_stat_intr-GS` | ✅ PASS | |
 
-#### Timer Tests: **12/13 PASSING** ✅
-| Test | Status |
-|------|--------|
-| `div_write` through `tma_write_reloading` | All ✅ PASS |
-| `tima_write_reloading` | ❌ FAIL |
+#### Timer Tests: **13/13 PASSING** ✅
+All 13 timer tests pass.
 
 #### MBC1 Tests: **13/13 PASSING** ✅
 All MBC1 emulator-only tests pass.
 
-#### Acceptance Root: **31/33 DMG-ABC PASSING** (excludes SGB/DMG0/MGB variants)
+#### Interrupt Tests: **3/3 PASSING** ✅
+All 3 interrupt tests pass (including `ie_push`).
+
+#### Acceptance Root: **33/34 DMG-ABC PASSING** (excludes SGB/DMG0/MGB variants)
 - 2 failures: `boot_div-dmgABCmgb`, `boot_hwio-dmgABCmgb`
 
 ---
@@ -324,6 +324,77 @@ statIrqLine_ = ((stat_ & 0x40) && (stat_ & 0x04));
 
 ---
 
+### Fix 8: TIMA Write During TMA Reload (`tima_write_reloading`)
+
+**Problem:** Writing to TIMA (FF05) during the exact T-cycle when TMA is reloaded into TIMA was always cancelling the reload. The test checks 4 different write timings around the reload cycle:
+- 1 M-cycle before reload: write cancels reload, but timer increment still fires (0x7F→0x80)
+- During overflow delay: write cancels reload (value 0x7F kept)
+- On reload cycle: write should be **ignored**, TMA (0xFE) wins
+- After reload: normal write (value 0x7F kept)
+
+**Root Cause:** `Timer::write()` for `case 0xFF05` unconditionally cancelled `overflowPending_` whenever a write occurred during the overflow delay. It didn't distinguish between "cycle A" (overflow pending, before reload — write should cancel) and "cycle B" (reload cycle — write should be ignored).
+
+**Fix:** Added `reloadedThisCycle_` guard at the top of the TIMA write handler:
+```cpp
+case 0xFF05: {
+    // Cycle B: TMA was just loaded → CPU write is ignored
+    if (reloadedThisCycle_) break;
+    // Cycle A: Cancel the pending reload
+    if (overflowPending_) overflowPending_ = false;
+    tima_ = val;
+    break;
+}
+```
+
+The `reloadedThisCycle_` flag was already set in `tick()` on the exact cycle of reload. No new state variables needed.
+
+**Impact:** Fixed `tima_write_reloading`. Timer score: 12/13 → **13/13 (perfect)**. Zero regressions.
+
+**Files:** `timer.cpp` (`Timer::write()`, case 0xFF05)
+
+---
+
+### Fix 9: IE Push During Interrupt Dispatch (`ie_push`)
+
+**Problem:** During interrupt dispatch, the CPU pushes PC onto the stack in two steps (high byte, then low byte). If SP happens to point at 0x0000, the high-byte push writes to 0xFFFF — the IE register. The test expects the interrupt vector to be determined by the **new** IE value after the push, not the original value read at the start of dispatch.
+
+**Root Cause:** `handleInterrupts()` read IE once at the start and determined the interrupt vector immediately. The two-byte push was done via `pushWord()` as a single operation. Any change to IE during the push was invisible to the vector selection logic.
+
+**Fix:** Split the interrupt dispatch to perform the two push writes individually, with an IE re-read between them:
+```cpp
+// Push high byte of PC
+reg.sp--;
+writeByte(reg.sp, (reg.pc >> 8) & 0xFF);
+
+// Re-read IE — the push may have written to 0xFFFF
+ieReg = bus_.read(0xFFFF);
+pending = ifReg & ieReg & 0x1F;
+
+// Push low byte of PC
+reg.sp--;
+writeByte(reg.sp, reg.pc & 0xFF);
+
+if (pending == 0) {
+    // Dispatch cancelled — PC goes to 0x0000, IF untouched
+    reg.pc = 0x0000;
+} else {
+    // Service highest-priority from refreshed pending set
+    // Clear IF bit and jump to vector
+}
+```
+
+The test has 4 rounds:
+1. SP=0x0000, high-byte push clears IE → dispatch cancelled, PC→0x0000, IF untouched
+2. After cancellation, IME is 0 → no spurious interrupt fires
+3. SP=0x0001, low-byte push writes IE → too late to cancel, interrupt dispatches normally
+4. SP=0x0000, two interrupts pending, high-byte push clears one → other interrupt dispatches
+
+**Impact:** Fixed `ie_push`. Interrupts: 2/3 → **3/3 (perfect)**. Zero regressions.
+
+**Files:** `cpu.cpp` (`handleInterrupts()`)
+
+---
+
 ## Known Issues & Remaining Work
 
 ### PPU Failures (0 remaining)
@@ -332,8 +403,8 @@ All 12/12 PPU tests now pass. ✅
 
 ### Other Failures
 
-- **`tima_write_reloading`**: Timer edge case — writing to TIMA during the reload cycle
-- **`ie_push`**: IE register read between two push cycles of interrupt dispatch
+- ~~**`tima_write_reloading`**~~: ✅ Fixed (Fix 8)
+- ~~**`ie_push`**~~: ✅ Fixed (Fix 9)
 - **Boot register tests**: We emulate DMG-ABC, not SGB/DMG0/MGB variants
 
 ### Not Yet Implemented

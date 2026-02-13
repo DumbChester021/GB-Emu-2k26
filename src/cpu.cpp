@@ -389,19 +389,39 @@ void CPU::handleInterrupts() {
 
     if (!ime_ || pending == 0) return;
 
-    // Service highest-priority interrupt (bit 0 = highest)
-    for (int i = 0; i < 5; i++) {
-        if (pending & (1 << i)) {
-            ime_ = false;
-            // Clear IF bit
-            bus_.write(0xFF0F, ifReg & ~(1 << i));
-            // Interrupt dispatch: 2 internal cycles + push PC + 1 internal
-            internalCycle();  // 4T
-            internalCycle();  // 4T
-            pushWord(reg.pc); // 8T (2 writes)
-            reg.pc = 0x0040 + (i * 8);
-            internalCycle();  // 4T — set PC to vector
-            return;
+    ime_ = false;
+
+    // Two internal wait cycles
+    internalCycle();  // 4T
+    internalCycle();  // 4T
+
+    // Push high byte of PC (SP decrements first, then writes)
+    reg.sp--;
+    writeByte(reg.sp, (reg.pc >> 8) & 0xFF);  // 4T
+
+    // Re-read IE after the high-byte push — the push itself may have
+    // written to 0xFFFF (if SP was 0x0000, the write targets IE).
+    ieReg = bus_.read(0xFFFF);
+    pending = ifReg & ieReg & 0x1F;
+
+    // Push low byte of PC
+    reg.sp--;
+    writeByte(reg.sp, reg.pc & 0xFF);  // 4T
+
+    if (pending == 0) {
+        // Dispatch cancelled — no matching interrupt after IE change.
+        // PC goes to 0x0000, IF is NOT modified.
+        reg.pc = 0x0000;
+    } else {
+        // Service highest-priority interrupt from the refreshed pending set
+        for (int i = 0; i < 5; i++) {
+            if (pending & (1 << i)) {
+                bus_.write(0xFF0F, bus_.read(0xFF0F) & ~(1 << i));
+                reg.pc = 0x0040 + (i * 8);
+                break;
+            }
         }
     }
+
+    internalCycle();  // 4T — set PC to vector
 }
