@@ -63,6 +63,7 @@ private:
 
     // ── Timing constants ────────────────────────────────────────────
     static constexpr int DOTS_PER_LINE = 456;
+    static constexpr int FIRST_LINE_DOTS = 448;  // First line after LCD enable is 8 dots shorter
     static constexpr int VISIBLE_LINES = 144;
     static constexpr int TOTAL_LINES   = 154;
     static constexpr int OAM_DOTS      = 80;
@@ -88,6 +89,7 @@ private:
     int dotCounter_ = 0;       // T-cycle counter within current scanline (0–455)
     bool lcdWasOff_ = false;   // Tracks LCD just-enabled state
     bool firstLineAfterEnable_ = false; // Line 0 after LCD enable has special timing
+    bool firstLineShorter_ = false;     // First line after LCD enable is 448 dots (not 456)
 
     // ── STAT interrupt line (rising-edge detection) ─────────────────
     bool statIrqLine_ = false;  // Previous combined STAT IRQ signal

@@ -6,8 +6,8 @@
 // Main tick() — advance PPU by exactly 1 T-cycle (dot)
 //
 // Hardware-accurate behavior:
-//   • Line 0 after LCD enable: starts at mode 0 for a brief moment,
-//     then goes to mode 3 (skips OAM search), PPU is 2 dots late
+//   • Line 0 after LCD enable: mode 0 for 78 dots, then mode 3
+//     (skips OAM search entirely, no sprites, line is 448 dots not 456)
 //   • Normal visible lines: mode 2 (80 dots) → mode 3 (variable) → mode 0
 //   • VBlank: lines 144–153, mode 1
 //   • STAT IRQ uses rising-edge detection on a single shared line
@@ -73,12 +73,13 @@ void PPU::tick() {
 
 void PPU::tickOAMSearch() {
     // Sprite evaluation on first dot of OAM search
-    if (dotCounter_ == 1) {
+    if (dotCounter_ == 5) {
         evaluateSprites();
     }
 
-    if (dotCounter_ >= OAM_DOTS) {
-        // Transition to Mode 3 (Pixel Transfer)
+    if (dotCounter_ >= OAM_DOTS + 4) {
+        // Transition to Mode 3 (Pixel Transfer) at dot 84
+        // (OAM_DOTS=80 + 4 pre-OAM dots)
         setMode(MODE_XFER);
         mode3StartDot_ = dotCounter_;
         mode3PenaltyDots_ = 5;  // Initial penalty: delays first pixel to dot 12
@@ -176,12 +177,15 @@ void PPU::tickPixelTransfer() {
 
 void PPU::tickHBlank() {
     // Special case: first line after LCD enable
-    // Line 0 starts in mode 0 for ~4 dots then transitions to mode 3
-    // (skips OAM search on the very first line)
-    if (ly_ == 0 && firstLineAfterEnable_) {
-        if (dotCounter_ == 4) {
+    // Line 0 starts in mode 0 for 78 dots then transitions to mode 3
+    // (skips OAM search on the very first line, no sprites evaluated)
+    if (firstLineAfterEnable_) {
+        if (dotCounter_ >= 78) {
             firstLineAfterEnable_ = false;
+            firstLineShorter_ = true;  // First line is 448 dots, not 456
             setMode(MODE_XFER);
+            mode3StartDot_ = dotCounter_;
+            mode3PenaltyDots_ = 5;  // Initial penalty: delays first pixel
             pixelX_ = 0;
             discardPixels_ = scx_ & 7;
             bgFifo_.clear();
@@ -191,14 +195,27 @@ void PPU::tickHBlank() {
             windowTriggered_ = false;
             spriteFetchPending_ = false;
             currentSpriteIdx_ = 0;
-            // Evaluate sprites for first line
-            evaluateSprites();
+            lineSpriteCount_ = 0;  // No sprites on first line
             return;
         }
-        if (dotCounter_ < 4) return;
+        return;  // Stay in mode 0 until dot 78
     }
 
-    if (dotCounter_ >= DOTS_PER_LINE) {
+    // Pre-OAM transition: normal lines stay in mode 0 for 4 dots before mode 2
+    if (dotCounter_ <= 4 && mode_ == MODE_HBLANK) {
+        if (dotCounter_ == 4) {
+            setMode(MODE_OAM);
+            // LYC coincidence becomes valid at this point
+            // (SameBoy: ly_for_comparison set to actual LY here)
+            checkLYC();
+            updateStatIRQ();
+        }
+        return;
+    }
+
+    int lineLength = firstLineShorter_ ? FIRST_LINE_DOTS : DOTS_PER_LINE;
+    if (dotCounter_ >= lineLength) {
+        firstLineShorter_ = false;
         dotCounter_ = 0;
 
         // Track window line counter
@@ -224,10 +241,17 @@ void PPU::tickHBlank() {
             // line high for the entire VBlank period.
             vblankOamPulse_ = true;
         } else {
-            setMode(MODE_OAM);
+            // Don't set mode to OAM yet — 4-dot pre-OAM transition
+            // Mode stays HBLANK; tickHBlank handles transition at dot 4
         }
 
-        checkLYC();
+        if (ly_ >= VISIBLE_LINES) {
+            checkLYC();
+        } else {
+            // Non-VBlank lines: LYC coincidence is invalid for first ~4 dots
+            // (SameBoy: ly_for_comparison = -1 for DMG at line start)
+            stat_ &= ~0x04;  // Clear coincidence flag
+        }
         updateStatIRQ();
         vblankOamPulse_ = false;  // Clear after one-shot evaluation
     }
@@ -646,6 +670,10 @@ uint8_t PPU::readVRAM(uint16_t addr) const {
     if ((lcdc_ & 0x80) && mode_ == MODE_XFER) {
         return 0xFF;
     }
+    if ((lcdc_ & 0x80) && mode_ == MODE_OAM && dotCounter_ >= (OAM_DOTS + 3)) {
+        // VRAM pre-blocking: VRAM becomes inaccessible 1 dot before mode 3
+        return 0xFF;
+    }
     return vram_[addr - 0x8000];
 }
 
@@ -664,12 +692,21 @@ uint8_t PPU::readOAM(uint16_t addr) const {
     if ((lcdc_ & 0x80) && (mode_ == MODE_OAM || mode_ == MODE_XFER)) {
         return 0xFF;
     }
+    // Pre-OAM blocking: OAM reads return $FF 1 dot before mode 2 starts
+    if ((lcdc_ & 0x80) && !firstLineAfterEnable_ && mode_ == MODE_HBLANK
+        && dotCounter_ >= 3 && dotCounter_ <= 4 && ly_ < VISIBLE_LINES) {
+        return 0xFF;
+    }
     return oam_[addr - 0xFE00];
 }
 
 void PPU::writeOAM(uint16_t addr, uint8_t val) {
-    if ((lcdc_ & 0x80) && (mode_ == MODE_OAM || mode_ == MODE_XFER)) {
-        return;
+    if (lcdc_ & 0x80) {
+        // During pixel transfer: writes always blocked
+        if (mode_ == MODE_XFER) return;
+        // During OAM search: writes blocked until the last dot before mode 3
+        // (SameBoy: oam_write_blocked cleared at end of OAM search)
+        if (mode_ == MODE_OAM && dotCounter_ < (OAM_DOTS + 3)) return;
     }
     oam_[addr - 0xFE00] = val;
 }

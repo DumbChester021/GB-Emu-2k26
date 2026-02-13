@@ -27,7 +27,7 @@ A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2 for disp
 - Accurate PPU timing (per-dot / T-cycle level with FIFO pixel pipeline)
 - Play commercial Game Boy games correctly
 
-### Source Files (4,680 LOC total)
+### Source Files (~4,700 LOC total)
 | File | LOC | Purpose |
 |------|-----|---------|
 | `ppu.cpp` | 659 | PPU state machine, pixel FIFO, tile fetcher, STAT IRQ |
@@ -102,18 +102,18 @@ A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2 for disp
 
 ### Mooneye Test Suite (mts-20240926) — As of 2026-02-13
 
-#### PPU Tests: **8/12 PASSING** ✅
+#### PPU Tests: **11/12 PASSING** ✅
 | Test | Status | Notes |
 |------|--------|-------|
-| `hblank_ly_scx_timing-GS` | ❌ FAIL | Regressed from read-before-tick change; see Known Issues |
+| `hblank_ly_scx_timing-GS` | ✅ PASS | Fixed by pre-OAM transition delay |
 | `intr_1_2_timing-GS` | ✅ PASS | Fixed by VBlank OAM pulse |
 | `intr_2_0_timing` | ✅ PASS | Fixed by mode 3 penalty (172 dots) |
 | `intr_2_mode0_timing` | ✅ PASS | Fixed by read-before-tick CPU ordering |
 | `intr_2_mode0_timing_sprites` | ✅ PASS | Fixed by sprite mode 3 penalties |
 | `intr_2_mode3_timing` | ✅ PASS | Fixed by read-before-tick CPU ordering |
 | `intr_2_oam_ok_timing` | ✅ PASS | Fixed by read-before-tick CPU ordering |
-| `lcdon_timing-GS` | ❌ FAIL | LCD enable timing not yet accurate |
-| `lcdon_write_timing-GS` | ❌ FAIL | LCD enable write timing |
+| `lcdon_timing-GS` | ✅ PASS | Fixed by LCD enable timing (Fix #6) |
+| `lcdon_write_timing-GS` | ✅ PASS | Fixed by LCD enable timing (Fix #6) |
 | `stat_irq_blocking` | ✅ PASS | |
 | `stat_lyc_onoff` | ❌ FAIL | LYC comparison with LCD toggle |
 | `vblank_stat_intr-GS` | ✅ PASS | |
@@ -129,9 +129,6 @@ All MBC1 emulator-only tests pass.
 
 #### Acceptance Root: **31/41 PASSING**
 - 10 failures: `boot_div`, `boot_hwio`, `boot_regs` (SGB/DMG0/MGB variants)
-
-#### CPU Tests: 0/1 (timeout)
-- `cpu_instrs` times out — depends on OAM DMA timing
 
 ---
 
@@ -271,27 +268,43 @@ dmaRestarting_ = false;
 
 ---
 
+### Fix 6: LCD Enable Timing (`lcdon_timing-GS`, `lcdon_write_timing-GS`)
+
+**Problem:** After LCD is enabled (LCDC bit 7 set), the first scanline has unique timing behavior. Tests check LY, STAT mode, OAM/VRAM access patterns at specific dot offsets after enable. All 6 sub-tests (LY, STAT, OAM read, VRAM read, OAM write, VRAM write) were failing.
+
+**Root Cause:** Multiple timing behaviors on the first scanline and on normal scanlines were inaccurate:
+1. First line after enable was too long and had wrong mode sequence
+2. Normal lines lacked a 4-dot pre-OAM transition (STAT shows mode 0 before switching to mode 2)
+3. Mode 3 started 4 dots too early on normal lines
+4. LYC coincidence updated too early at line boundaries
+5. OAM/VRAM access pre-blocking was missing (hardware blocks access before STAT mode bits change)
+6. OAM write blocking had different timing from read blocking
+
+**Fix (6 coordinated sub-fixes):**
+
+| Timing Behavior | Before | After |
+|---|---|---|
+| First line after LCD enable | 4-dot mode 0 → mode 3, 456 dots | 78-dot mode 0 → mode 3, 448 dots, no sprite eval |
+| Normal line pre-OAM | Mode 2 at dot 0 | Mode 0 for dots 1-3, mode 2 at dot 4 |
+| Mode 3 start (normal lines) | Dot 80 | Dot 84 (accounts for 4-dot pre-OAM) |
+| LYC coincidence at line boundary | Immediate | Cleared at boundary, set at dot 4 |
+| OAM read pre-blocking | None | Returns $FF at dots 3-4 before mode 2 |
+| VRAM read pre-blocking | None | Returns $FF at dot 83+ (1 dot before mode 3) |
+| OAM write blocking | Full mode 2 + mode 3 | Mode 2 up to dot 82 only + mode 3 |
+
+**Key insight:** On real DMG hardware, memory access blocking is separate from STAT mode bits. OAM reads are blocked 1 dot before STAT shows mode 2. VRAM reads are blocked 1 dot before mode 3. But OAM *writes* are unblocked 1 dot before mode 3 (while STAT still shows mode 2). These asymmetric read/write blocking windows are modeled by SameBoy's separate `oam_read_blocked`, `oam_write_blocked`, `vram_read_blocked` flags.
+
+**Impact:** Fixed both `lcdon_timing-GS` and `lcdon_write_timing-GS`. Also fixed the `hblank_ly_scx_timing-GS` regression (the 4-dot pre-OAM delay corrected the CPU-PPU phase alignment). PPU score: 8/12 → **11/12**.
+
+**Files:** `ppu.cpp` (`tickHBlank`, `tickOAMSearch`, `readVRAM`, `readOAM`, `writeOAM`, `writeVRAM`), `ppu.h` (`FIRST_LINE_DOTS`, `firstLineShorter_`)
+
+---
+
 ## Known Issues & Remaining Work
 
-### PPU Failures (5 remaining)
+### PPU Failures (1 remaining)
 
-#### 1. `hblank_ly_scx_timing-GS` — REGRESSED
-- **What:** Tests that mode 0 (HBlank) duration varies correctly with SCX value
-- **Why:** Regressed when readByte/writeByte ordering was changed (Fix #3). The test previously passed with tick-before-read. The read-before-tick ordering shifted CPU-PPU phase alignment by 1 M-cycle, which this test is sensitive to.
-- **Investigation needed:** May need a more nuanced solution — perhaps read-before-tick for IO register reads only, or adjusting the dotCounter_ phase by 1. The root issue is that tick-before-read passes this test but fails `intr_2_*` tests, and read-before-tick passes `intr_2_*` but fails this one.
-- **Possible fix direction:** The real DMG CPU reads the bus at T3 of the M-cycle (not T0 or T4). Sub-M-cycle accuracy (ticking 1 dot at a time inside readByte) might resolve both. Alternatively, the dotCounter_ increment in `tick()` could be adjusted from pre-increment to post-increment.
-
-#### 2. `intr_2_mode0_timing_sprites` — ✅ FIXED (Sprite penalty timing)
-- **What:** Mode 3 duration now increases correctly with sprite count and position
-- **Fix:** Pre-compute sprite penalties at OAM→XFER transition: 6 dots per sprite + alignment cost shared per unique X position
-- **Verified:** Against all 105 test cases in the Mooneye test ROM
-
-#### 3. `lcdon_timing-GS` / `lcdon_write_timing-GS` — LCD enable timing
-- **What:** Tests the exact frame timing after setting LCDC bit 7 (LCD enable)
-- **Why:** Our LCD enable handling (`firstLineAfterEnable_`) starts line 0 in mode 0 for 4 dots then jumps to mode 3, skipping OAM. The exact timing of the first frame after LCD enable may be off.
-- **Fix:** Compare with DMG hardware docs for exact LCD enable behavior. May need adjustment to the initial dot counter and mode sequence.
-
-#### 4. `stat_lyc_onoff` — LYC with LCD toggle
+#### 1. `stat_lyc_onoff` — LYC with LCD toggle
 - **What:** Tests LYC coincidence behavior when LCD is turned off and on
 - **Why:** When LCD is disabled, LY resets to 0. The test checks that LYC coincidence flag and interrupt behave correctly around LCD toggle.
 - **Fix:** Ensure that `checkLYC()` and `updateStatIRQ()` are called correctly when LCDC bit 7 changes.
@@ -299,11 +312,10 @@ dmaRestarting_ = false;
 ### Other Failures
 
 - **`tima_write_reloading`**: Timer edge case — writing to TIMA during the reload cycle
-- **`oam_dma_start`**: ✅ Fixed — added `dmaRestarting_` flag for restart OAM blocking
+- **`ie_push`**: IE register read between two push cycles of interrupt dispatch
 - **Boot register tests**: We emulate DMG-ABC, not SGB/DMG0/MGB variants
 
 ### Not Yet Implemented
-- **VRAM/OAM access locking**: PPU should block CPU VRAM access during mode 3, OAM during modes 2-3
 - **Sub-M-cycle bus accuracy**: CPU reads at T3 of M-cycle, not T0 or T4
 
 ---
@@ -312,8 +324,10 @@ dmaRestarting_ = false;
 
 ### PPU Dot Counter
 - `dotCounter_` is pre-incremented in `tick()` before calling mode handlers
-- First tick of OAM has `dotCounter_=1`, transition happens at `dotCounter_>=80`
-- HBlank fills until `dotCounter_>=456` (DOTS_PER_LINE)
+- Normal lines: 4-dot pre-OAM delay (dots 1-3 stay in HBLANK, mode 2 at dot 4)
+- OAM search: mode 3 transition at `dotCounter_ >= OAM_DOTS + 4` (dot 84)
+- First line after LCD enable: 448 dots, 78-dot mode 0 → mode 3, no OAM
+- HBlank fills until `dotCounter_ >= DOTS_PER_LINE` (456, or 448 for first line)
 - dotCounter is reset to 0 at scanline boundaries
 
 ### STAT IRQ Rising Edge

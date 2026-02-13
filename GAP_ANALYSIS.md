@@ -1,6 +1,6 @@
 # GB-Emu-2k26 — Gap Analysis for Mooneye Compliance
 
-> **Current Score: 85/97 tests passing** (77/85 acceptance + 8/12 PPU)
+> **Current Score: 88/97 tests passing** (80/85 acceptance + 8/12 PPU)
 > **Target: All Mooneye DMG tests**
 
 ---
@@ -22,7 +22,7 @@
 | MBC5 | 8 | 8 | ✅ Perfect |
 | Interrupts | 2 | 3 | 🟡 1 failing |
 | OAM DMA | 6 | 6 | ✅ Perfect |
-| PPU | 8 | 12 | 🔴 4 failing |
+| PPU | 11 | 12 | 🟡 1 failing |
 | Boot Regs (DMG) | 1 | 2 | 🟡 DMG0 variant |
 | Boot DIV (DMG) | 0 | 2 | 🔴 Both failing |
 | Boot HWIO (DMG) | 0 | 2 | 🔴 Both failing |
@@ -56,43 +56,31 @@ The penalty formula was verified against all 105 test cases in the Mooneye test 
 
 ---
 
-### 🔴 Priority 3: LCD Enable Timing (MEDIUM-HIGH IMPACT)
-**Failing tests:** `lcdon_timing-GS`, `lcdon_write_timing-GS`
+### ✅ Priority 3: LCD Enable Timing — COMPLETED
+**Fixed tests:** `lcdon_timing-GS`, `lcdon_write_timing-GS` (both passing)
 
-**What's missing:**
-The exact behavior of the first frame after LCD is turned on (LCDC bit 7 set from 0→1) is not accurately modeled. On real hardware:
-- Line 0 starts with a shortened Mode 2 (no OAM evaluation)
-- The transition into Mode 3 happens at a specific dot offset
-- Writes to certain registers during this first line behave differently
+**What was done:**
+Implemented accurate first-line-after-LCD-enable timing: 78-dot mode 0 → mode 3, 448-dot line, no sprite evaluation. Added 4-dot pre-OAM transition delay on normal lines (STAT stays mode 0 for dots 1-3, mode 2 at dot 4). Shifted mode 3 start from dot 80 to dot 84. Delayed LYC coincidence check to dot 4 at line boundaries.
 
-Currently, `firstLineAfterEnable_` starts in Mode 0 for 4 dots then jumps to Mode 3, which doesn't match hardware.
+Implemented asymmetric OAM/VRAM access pre-blocking matching SameBoy's separate blocked flags:
+- OAM reads: blocked 1 dot before mode 2 (dots 3-4 during pre-OAM transition)
+- VRAM reads: blocked 1 dot before mode 3 (dot 83+, while STAT still shows mode 2)
+- OAM writes: blocked during mode 2 up to dot 82 only (unblocked at dot 83 before mode 3)
+- VRAM writes: blocked only during actual mode 3 (no pre-blocking)
 
-**Why it matters:**
-- 2 PPU test failures
-- Games that toggle the LCD (e.g., during screen transitions) rely on predictable timing after re-enable
-- Less commonly tested in games than sprite penalties, but still important for accuracy
+**Impact:** Also fixed the `hblank_ly_scx_timing-GS` regression — the pre-OAM delay corrected the CPU-PPU phase alignment.
 
-**Difficulty:** Medium-Hard — requires careful study of DMG hardware documentation for the exact LCD enable sequence
+**Difficulty:** Complete
 
 ---
 
-### 🟡 Priority 4: `hblank_ly_scx_timing-GS` Regression (MEDIUM IMPACT)
-**Failing test:** `hblank_ly_scx_timing-GS`
+### ✅ Priority 4: `hblank_ly_scx_timing-GS` — COMPLETED (Fixed alongside Priority 3)
+**Fixed test:** `hblank_ly_scx_timing-GS` (now passing)
 
-**What's missing:**
-This test previously passed but regressed when the CPU bus ordering was changed from "tick-before-read" to "read-before-tick" (Fix #3 in DEVLOG). The test checks that HBlank duration varies correctly with SCX value, and it's sensitive to the exact CPU-PPU phase alignment.
+**What was done:**
+The 4-dot pre-OAM transition delay from Priority 3 fixed the CPU-PPU phase alignment that was causing this test to fail. No additional changes needed.
 
-**Why it matters:**
-- 1 PPU failure that used to pass
-- The real DMG CPU reads the bus at **T3 of the M-cycle** (not T0), which is between read-before-tick and tick-before-read
-- A proper fix likely requires **sub-M-cycle bus accuracy** — ticking 1 dot at a time inside `readByte()` with the read happening at dot 3
-
-**Difficulty:** Hard — may require fundamental changes to the CPU-PPU synchronization model. This is the deepest timing issue.
-
-**Possible approaches:**
-1. **Sub-M-cycle ticking**: Change `readByte()` to tick 3 dots → read → tick 1 dot. Most accurate but invasive.
-2. **Post-increment trick**: Adjust `dotCounter_` initialization or increment phase. Simpler but hacky.
-3. **Separate IO read path**: Read-before-tick for IO registers (STAT, LY), tick-before-read for memory. May not fully solve it.
+**Difficulty:** Complete
 
 ---
 
@@ -191,16 +179,15 @@ Serial clock alignment after bootrom. The serial transfer shift clock should be 
 |---|---------|-------------|------------|-------------|
 | 1 | ~~**OAM DMA bus conflicts**~~ | ✅ all done | ~~Medium~~ | ✅ Completed — all 6 tests pass |
 | 2 | ~~**Sprite mode 3 penalties**~~ | ✅ done | ~~Medium~~ | ✅ Completed — sprite test passes |
-| 3 | **LCD enable timing** | +2 | Medium-Hard | Medium — screen transitions |
-| 4 | **HBlank/SCX timing (sub-M-cycle)** | +1 | Hard | Medium — raster effects |
-| 5 | **STAT LYC on/off** | +1 | Medium | Medium — LCD toggle games |
-| 6 | **TIMA write during reload** | +1 | Easy-Medium | Low — rare edge case |
-| 7 | **IE push edge case** | +1 | Medium | Very Low — almost never happens |
-| 8 | **Boot register/DIV/HWIO** | +5 | Medium | Very Low — bootrom-only |
-| 9 | **Serial clock alignment** | +1 | Medium | Very Low — link cable only |
+| 3 | ~~**LCD enable timing**~~ | ✅ +3 done | ~~Medium-Hard~~ | ✅ Completed — lcdon + hblank pass |
+| 4 | **STAT LYC on/off** | +1 | Medium | Medium — LCD toggle games |
+| 5 | **TIMA write during reload** | +1 | Easy-Medium | Low — rare edge case |
+| 6 | **IE push edge case** | +1 | Medium | Very Low — almost never happens |
+| 7 | **Boot register/DIV/HWIO** | +5 | Medium | Very Low — bootrom-only |
+| 8 | **Serial clock alignment** | +1 | Medium | Very Low — link cable only |
 
 > [!TIP]
-> **Next best bang for the buck**: Item 2 (sprite penalties) gives foundational PPU accuracy affecting real games. Item 6 is the easiest single fix. Items 3 and 5 are related (LCD enable/disable handling) and could be tackled together.
+> **Next best bang for the buck**: Item 4 (`stat_lyc_onoff`) is the last remaining PPU failure and likely a fix within the LCDC write handler. Item 5 is the easiest single fix.
 
 > [!NOTE]
 > **Not listed but also missing**: Audio/APU (no sound at all). This doesn't affect Mooneye tests but is essential for game experience.
