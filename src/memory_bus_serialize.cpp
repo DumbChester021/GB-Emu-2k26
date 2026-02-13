@@ -37,6 +37,8 @@ void MemoryBus::serialize(SaveState& ss) const {
     ss.write<int32_t>(dmaByte_);
     ss.write<int32_t>(dmaClock_);
     ss.write<int32_t>(dmaDelay_);
+    ss.writeBool(dmaRestarting_);
+    ss.write<uint8_t>(dmaLastByte_);
 }
 
 void MemoryBus::deserialize(SaveState& ss) {
@@ -70,4 +72,6 @@ void MemoryBus::deserialize(SaveState& ss) {
     dmaByte_ = ss.read<int32_t>();
     dmaClock_ = ss.read<int32_t>();
     dmaDelay_ = ss.read<int32_t>();
+    dmaRestarting_ = ss.readBool();
+    dmaLastByte_ = ss.read<uint8_t>();
 }

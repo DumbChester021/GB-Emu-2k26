@@ -1,6 +1,6 @@
 # GB-Emu-2k26 — Development Log & Architecture Reference
 
-> **Last Updated:** 2026-02-11  
+> **Last Updated:** 2026-02-13  
 > **Purpose:** Capture all development context, architecture decisions, hard-won bug fixes, and remaining work so future sessions can continue efficiently without re-discovering past findings.
 
 ---
@@ -84,7 +84,12 @@ A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2 for disp
 - PPU registers (FF40-FF4B) delegated to `PPU::readReg()`/`writeReg()`
 - Timer registers (FF04-FF07) delegated to `Timer`
 - `tick()` advances PPU by 1 dot and timer by 1 T-cycle
-- OAM DMA: basic implementation (copies 160 bytes, no bus conflict emulation)
+- OAM DMA: copies 160 bytes with SameBoy-style bus conflict emulation
+  - Per-bus conflict detection: VRAM bus vs MAIN bus
+  - Conflicting reads return last DMA-transferred byte (`dmaLastByte_`)
+  - 2 M-cycle startup delay before bus conflict takes effect
+  - OAM is blocked (returns 0xFF) only after startup delay
+  - DMA from echo RAM region (≥0xE000) maps through `src & ~0x2000`
 
 ### Timer (`timer.cpp`, `timer.h`)
 - Falling-edge detection on internal counter bit for TIMA increment
@@ -95,7 +100,7 @@ A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2 for disp
 
 ## Test Results Summary
 
-### Mooneye Test Suite (mts-20240926) — As of 2026-02-11
+### Mooneye Test Suite (mts-20240926) — As of 2026-02-13
 
 #### PPU Tests: **8/12 PASSING** ✅
 | Test | Status | Notes |
@@ -104,7 +109,7 @@ A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2 for disp
 | `intr_1_2_timing-GS` | ✅ PASS | Fixed by VBlank OAM pulse |
 | `intr_2_0_timing` | ✅ PASS | Fixed by mode 3 penalty (172 dots) |
 | `intr_2_mode0_timing` | ✅ PASS | Fixed by read-before-tick CPU ordering |
-| `intr_2_mode0_timing_sprites` | ❌ FAIL | Needs sprite-extended mode 3 timing |
+| `intr_2_mode0_timing_sprites` | ✅ PASS | Fixed by sprite mode 3 penalties |
 | `intr_2_mode3_timing` | ✅ PASS | Fixed by read-before-tick CPU ordering |
 | `intr_2_oam_ok_timing` | ✅ PASS | Fixed by read-before-tick CPU ordering |
 | `lcdon_timing-GS` | ❌ FAIL | LCD enable timing not yet accurate |
@@ -122,8 +127,8 @@ A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2 for disp
 #### MBC1 Tests: **13/13 PASSING** ✅
 All MBC1 emulator-only tests pass.
 
-#### Acceptance Root: **29/41 PASSING**
-- 12 failures are all `boot_div`, `boot_hwio`, `boot_regs` (SGB/DMG0/MGB variants) + `oam_dma_start`
+#### Acceptance Root: **31/41 PASSING**
+- 10 failures: `boot_div`, `boot_hwio`, `boot_regs` (SGB/DMG0/MGB variants)
 
 #### CPU Tests: 0/1 (timeout)
 - `cpu_instrs` times out — depends on OAM DMA timing
@@ -208,9 +213,67 @@ uint8_t CPU::readByte(uint16_t addr) {
 
 ---
 
+### Fix 4: OAM DMA Bus Conflicts (`sources-GS`, `reg_read`, `oam_dma_restart`)
+
+**Problem:** During OAM DMA, the CPU continued reading/writing all memory normally. Tests expected bus conflicts where CPU accesses to the same bus as DMA return corrupted data.
+
+**Root Cause:** DMG has two external buses — MAIN (ROM, WRAM, External RAM) and VRAM. During DMA, the DMA controller occupies one bus. CPU reads from the same bus get the last byte DMA transferred, not the actual memory value. Addresses ≥0xFE00 (OAM, IO, HRAM, IE) are on the internal bus and never blocked.
+
+**Fix (SameBoy-style):**
+```cpp
+// In read(): per-bus conflict detection
+if (dmaActive_ && dmaDelay_ == 0 && addr < 0xFE00) {
+    bool dmaOnVRAM = (dmaSrc_ >= 0x8000 && dmaSrc_ < 0xA000);
+    bool cpuOnVRAM = (addr >= 0x8000 && addr < 0xA000);
+    if (dmaOnVRAM == cpuOnVRAM) return dmaLastByte_;
+}
+// OAM blocked only after startup delay:
+if (addr < 0xFEA0 && dmaActive_ && dmaDelay_ == 0) return 0xFF;
+```
+
+**Key insight:** Initial attempts using `addr < 0xFF80` (block everything below HRAM) and returning 0xFF caused regressions. The correct approach is:
+1. Per-bus conflict — only block when DMA and CPU are on the **same** bus
+2. Return `dmaLastByte_` (last DMA-transferred byte), not 0xFF
+3. OAM blocking must respect the 2 M-cycle startup delay
+4. DMA from echo RAM (≥0xE000) maps through `srcAddr & ~0x2000` to WRAM
+
+**Impact:** Fixed `sources-GS` (75→76/85). Zero regressions.
+
+**Files:** `memory_bus.cpp` (read/write guards + tick DMA), `memory_bus.h` (`dmaLastByte_`)
+
+---
+
+### Fix 5: OAM DMA Start Timing (`oam_dma_start`)
+
+**Problem:** The `oam_dma_start` test checks exact cycle-by-cycle behavior during DMA startup. When DMA is restarted while a previous one is running, OAM should stay blocked through the new DMA's startup delay. The old code only checked `dmaDelay_ == 0`, which let OAM become accessible during the restart's startup delay.
+
+**Root Cause:** When DMA restarts, `dmaDelay_` is reset to 8. During the new delay period, `dmaDelay_ != 0` means OAM blocking was disabled — but the previous DMA was already blocking OAM, so it should stay blocked.
+
+**Fix:** Added `dmaRestarting_` flag:
+```cpp
+// In DMA trigger (FF46 write):
+dmaRestarting_ = dmaActive_; // Previous DMA was running
+dmaActive_ = true;
+dmaByte_ = 0;
+dmaClock_ = 0;
+dmaDelay_ = 8;
+
+// In OAM read:
+if (dmaActive_ && (dmaDelay_ == 0 || dmaRestarting_)) return 0xFF;
+
+// In DMA tick, after first byte transfer:
+dmaRestarting_ = false;
+```
+
+**Impact:** Fixed `oam_dma_start` (76→77/85 acceptance). Zero regressions.
+
+**Files:** `memory_bus.cpp`, `memory_bus.h` (`dmaRestarting_`), `memory_bus_serialize.cpp`
+
+---
+
 ## Known Issues & Remaining Work
 
-### PPU Failures (4 remaining)
+### PPU Failures (5 remaining)
 
 #### 1. `hblank_ly_scx_timing-GS` — REGRESSED
 - **What:** Tests that mode 0 (HBlank) duration varies correctly with SCX value
@@ -218,10 +281,10 @@ uint8_t CPU::readByte(uint16_t addr) {
 - **Investigation needed:** May need a more nuanced solution — perhaps read-before-tick for IO register reads only, or adjusting the dotCounter_ phase by 1. The root issue is that tick-before-read passes this test but fails `intr_2_*` tests, and read-before-tick passes `intr_2_*` but fails this one.
 - **Possible fix direction:** The real DMG CPU reads the bus at T3 of the M-cycle (not T0 or T4). Sub-M-cycle accuracy (ticking 1 dot at a time inside readByte) might resolve both. Alternatively, the dotCounter_ increment in `tick()` could be adjusted from pre-increment to post-increment.
 
-#### 2. `intr_2_mode0_timing_sprites` — Sprite penalty timing
-- **What:** Mode 3 duration should increase with sprite count and position
-- **Why:** Our sprite rendering mixes pixels but doesn't add mode 3 dot penalties. On real DMG, each sprite adds 6-11 extra dots to mode 3 depending on its X position.
-- **Fix:** Add per-sprite penalty dots in `tickPixelTransfer()` when sprite fetching occurs.
+#### 2. `intr_2_mode0_timing_sprites` — ✅ FIXED (Sprite penalty timing)
+- **What:** Mode 3 duration now increases correctly with sprite count and position
+- **Fix:** Pre-compute sprite penalties at OAM→XFER transition: 6 dots per sprite + alignment cost shared per unique X position
+- **Verified:** Against all 105 test cases in the Mooneye test ROM
 
 #### 3. `lcdon_timing-GS` / `lcdon_write_timing-GS` — LCD enable timing
 - **What:** Tests the exact frame timing after setting LCDC bit 7 (LCD enable)
@@ -236,14 +299,11 @@ uint8_t CPU::readByte(uint16_t addr) {
 ### Other Failures
 
 - **`tima_write_reloading`**: Timer edge case — writing to TIMA during the reload cycle
-- **`oam_dma_start`**: OAM DMA doesn't model bus conflicts
+- **`oam_dma_start`**: ✅ Fixed — added `dmaRestarting_` flag for restart OAM blocking
 - **Boot register tests**: We emulate DMG-ABC, not SGB/DMG0/MGB variants
-- **CPU test**: Timeout — depends on OAM DMA accuracy
 
 ### Not Yet Implemented
-- **OAM DMA bus conflicts**: During DMA, CPU should only access HRAM
 - **VRAM/OAM access locking**: PPU should block CPU VRAM access during mode 3, OAM during modes 2-3
-- **Sprite mode 3 penalties**: 6-11 extra dots per sprite based on X position
 - **Sub-M-cycle bus accuracy**: CPU reads at T3 of M-cycle, not T0 or T4
 
 ---
@@ -273,7 +333,7 @@ This means writing to STAT register can cause or suppress interrupts, and multip
 ```
 mode3_dots = 172 + (SCX % 8) + sprite_penalties
 ```
-Where `sprite_penalties` = sum of per-sprite costs (6-11 dots each, based on X position modulo 8). Currently we only implement the base 172 dots.
+Where `sprite_penalties` per unique X group = `max(0, 5 - (X + SCX) % 8)` alignment (shared) + `6 × count` per sprite. Sprites at X ≥ 168 are free. ✅ IMPLEMENTED.
 
 ### Interrupt Dispatch Timing
 ```

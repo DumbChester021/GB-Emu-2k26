@@ -134,6 +134,19 @@ static uint8_t ioReadMask(uint8_t reg) {
 // ══════════════════════════════════════════════════════════════════════
 
 uint8_t MemoryBus::read(uint16_t addr) const {
+    // ── OAM DMA bus conflict ────────────────────────────────────────
+    // During active DMA (past startup delay), the DMA controller owns
+    // one of the external buses. CPU reads from the same bus get the
+    // last byte DMA transferred.
+    // On DMG: VRAM (0x8000–0x9FFF) is one bus, everything else <0xFE00 is MAIN.
+    if (dmaActive_ && dmaDelay_ == 0 && addr < 0xFE00) {
+        bool dmaOnVRAM  = (dmaSrc_ >= 0x8000 && dmaSrc_ < 0xA000);
+        bool cpuOnVRAM  = (addr >= 0x8000 && addr < 0xA000);
+        if (dmaOnVRAM == cpuOnVRAM) {
+            return dmaLastByte_;
+        }
+    }
+
     // ── Bootrom overlay (0x0000–0x00FF) ──────────────────────────────
     if (addr < 0x0100 && bootromActive_) {
         return bootrom_[addr];
@@ -168,8 +181,8 @@ uint8_t MemoryBus::read(uint16_t addr) const {
 
     // ── OAM (0xFE00–0xFE9F) — delegated to PPU ──────────────────────
     if (addr < 0xFEA0) {
-        // During OAM DMA, CPU reads from OAM return 0xFF
-        if (dmaActive_) return 0xFF;
+        // During OAM DMA (past startup delay), CPU reads from OAM return 0xFF
+        if (dmaActive_ && (dmaDelay_ == 0 || dmaRestarting_)) return 0xFF;
         return ppu_.readOAM(addr);
     }
 
@@ -215,6 +228,16 @@ uint8_t MemoryBus::read(uint16_t addr) const {
 // ══════════════════════════════════════════════════════════════════════
 
 void MemoryBus::write(uint16_t addr, uint8_t val) {
+    // ── OAM DMA bus conflict ────────────────────────────────────────
+    // During active DMA (past startup delay), writes to the same bus are ignored.
+    if (dmaActive_ && dmaDelay_ == 0 && addr < 0xFE00) {
+        bool dmaOnVRAM  = (dmaSrc_ >= 0x8000 && dmaSrc_ < 0xA000);
+        bool cpuOnVRAM  = (addr >= 0x8000 && addr < 0xA000);
+        if (dmaOnVRAM == cpuOnVRAM) {
+            return;
+        }
+    }
+
     // ── ROM (0x0000–0x7FFF) ── delegated to MBC via Cartridge ──────────
     if (addr < 0x8000) {
         if (cart_) cart_->write(addr, val);
@@ -280,6 +303,7 @@ void MemoryBus::write(uint16_t addr, uint8_t val) {
 
             // OAM DMA trigger (FF46) — also handled here for bus control
             if (addr == 0xFF46) {
+                dmaRestarting_ = dmaActive_; // If previous DMA running, OAM stays blocked
                 dmaActive_ = true;
                 dmaSrc_    = static_cast<uint16_t>(val) << 8;
                 dmaByte_   = 0;
@@ -339,7 +363,9 @@ void MemoryBus::tick() {
     // ── OAM DMA ──────────────────────────────────────────────────────
     if (dmaActive_) {
         if (dmaDelay_ > 0) {
-            // Startup delay
+            // Startup delay — DMA controller warming up
+            // During this phase, dmaByte_ == 0, so bus conflicts are inactive
+            // and OAM is accessible (for fresh DMA; restart keeps OAM blocked)
             dmaDelay_--;
         } else {
             // Copy one byte every 4 T-cycles (1 M-cycle)
@@ -362,13 +388,16 @@ void MemoryBus::tick() {
                         if (cart_) val = cart_->read(srcAddr);
                     } else if (srcAddr < 0xE000) {
                         val = wram_[srcAddr - 0xC000];
-                    } else if (srcAddr < 0xFE00) {
-                        val = wram_[srcAddr - 0xE000]; // Echo RAM
+                    } else {
+                        // Echo RAM mapping: addresses >= 0xE000 map to WRAM
+                        // This includes 0xFE00+ and 0xFF00+ (per SameBoy DMG behavior)
+                        val = wram_[(srcAddr & ~0x2000) - 0xC000];
                     }
-                    // OAM DMA from OAM/IO/HRAM regions is undefined
 
                     // Write directly to PPU OAM, bypassing mode blocking
                     ppu_.dmaWriteOAM(dmaByte_, val);
+                    dmaLastByte_ = val;
+                    dmaRestarting_ = false; // Clear restart flag after first byte
                     dmaByte_++;
 
                     if (dmaByte_ >= 160) {

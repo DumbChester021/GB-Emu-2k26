@@ -1,5 +1,6 @@
 #include "ppu.h"
 #include <cstring>
+#include <algorithm>
 
 // ══════════════════════════════════════════════════════════════════════
 // Main tick() — advance PPU by exactly 1 T-cycle (dot)
@@ -81,6 +82,31 @@ void PPU::tickOAMSearch() {
         setMode(MODE_XFER);
         mode3StartDot_ = dotCounter_;
         mode3PenaltyDots_ = 5;  // Initial penalty: delays first pixel to dot 12
+
+        // ── Sprite mode 3 penalties ─────────────────────────────────
+        // On DMG, each sprite extends mode 3. The cost per sprite is:
+        //   6 dots (fixed sprite fetch) + alignment to fetcher state
+        // Sprites at the same X share the alignment cost.
+        // Sprites at X >= 168 are fully off-screen right (no penalty).
+        for (int i = 0; i < lineSpriteCount_; i++) {
+            int sx = lineSprites_[i].x;
+            if (sx >= 168) continue;
+
+            // Check if a previous sprite already paid alignment for this X
+            bool alignmentPaid = false;
+            for (int j = 0; j < i; j++) {
+                if (lineSprites_[j].x == sx) {
+                    alignmentPaid = true;
+                    break;
+                }
+            }
+
+            if (!alignmentPaid) {
+                mode3PenaltyDots_ += std::max(0, 5 - static_cast<int>((sx + scx_) % 8));
+            }
+            mode3PenaltyDots_ += 6;  // Fixed per-sprite cost
+        }
+
         pixelX_ = 0;
         discardPixels_ = scx_ & 7;
         bgFifo_.clear();

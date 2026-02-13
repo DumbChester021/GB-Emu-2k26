@@ -90,4 +90,6 @@ private:
     int      dmaByte_    = 0;     // Current byte index (0–159)
     int      dmaClock_   = 0;     // T-cycle counter within current byte
     int      dmaDelay_   = 0;     // Startup delay (8 T-cycles = 2 M-cycles)
+    bool     dmaRestarting_ = false; // Previous DMA was running when restarted
+    uint8_t  dmaLastByte_= 0xFF;  // Last byte transferred by DMA (returned on bus conflict)
 };
