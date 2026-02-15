@@ -51,9 +51,13 @@ sudo pacman -S base-devel cmake sdl2
 
 #### Windows (PowerShell)
 ```powershell
-# Prerequisites: Git, CMake, and a C++ Compiler (Visual Studio or MinGW)
+# Prerequisites: Git, CMake, and a C++ Compiler (Visual Studio 2022 recommended)
+# This script handles dependencies (vcpkg + SDL2), configuration, and building.
 .\build_and_run.ps1
 ```
+
+> **Note:** The Windows build uses a separate `build_win` directory to avoid file lock issues.
+> A native file picker is available (via PowerShell fallback) when running without arguments.
 
 #### Linux / macOS
 ```bash

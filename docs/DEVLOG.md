@@ -437,7 +437,24 @@ Full DMG APU with all 4 channels, frame sequencer, register I/O, stereo mixing, 
 
 ---
 
-## Key Technical Details
+## Windows Port (2026-02-15)
+
+### Strategy
+- **Build System**: Used `vcpkg` for dependency management (SDL2) to match the Linux `apt`/`pacman` ease of use.
+- **Scripting**: Created `build_and_run.ps1` to mirror the Linux shell script.
+  - **Auto-Bootstrapping**: The script clones `vcpkg` locally if missing, preventing system-wide pollution.
+  - **Parallel Builds**: Added `cmake --build . --parallel` to speed up MSVC builds.
+  - **Build Isolation**: Uses `build_win` directory to avoid file lock issues common on Windows (where running executables cannot be overwritten).
+
+### Build Issues & Fixes
+- **`zenity` Replacement**: Linux uses `zenity` for file dialogs. Windows doesn't have a direct CLI equivalent.
+- **Win32 API Conflict**: Initially tried `GetOpenFileNameA` from `<commdlg.h>`.
+  - **Problem**: `windows.h` defines `min`/`max` macros that conflict with `std::min`/`std::max`. Adding `NOMINMAX` didn't fully resolve `prsht.h` syntax errors due to include ordering fragility in the existing codebase.
+  - **Solution**: Pivoted to a **PowerShell fallback**. `src/file_dialog.cpp` now uses `_popen` to run a PowerShell one-liner that opens `System.Windows.Forms.OpenFileDialog`. This isolates the Windows API completely from the C++ build, ensuring stability and zero header pollution.
+
+### Remaining Work
+- **Sub-M-cycle bus accuracy**: CPU reads at T3 of M-cycle, not T0 or T4
+
 
 ### PPU Dot Counter
 - `dotCounter_` is pre-incremented in `tick()` before calling mode handlers
