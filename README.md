@@ -49,12 +49,17 @@ sudo pacman -S base-devel cmake sdl2
 
 ### Build
 
+#### Windows (PowerShell)
+```powershell
+# Prerequisites: Git, CMake, and a C++ Compiler (Visual Studio or MinGW)
+.\build_and_run.ps1
+```
+
+#### Linux / macOS
 ```bash
 git clone https://github.com/DumbChester021/GB-Emu-2k26.git
 cd GB-Emu-2k26
-mkdir -p build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-make -j$(nproc)
+./build_and_run.sh
 ```
 
 ### Run

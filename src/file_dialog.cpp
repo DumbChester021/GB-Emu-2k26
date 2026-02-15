@@ -4,6 +4,11 @@
 #include <cstdio>
 #include <cstring>
 
+#ifdef _WIN32
+    #define popen _popen
+    #define pclose _pclose
+#endif
+
 std::string openFileDialog() {
     // Use zenity on Linux for a native-feeling file picker
     const char* cmd =
