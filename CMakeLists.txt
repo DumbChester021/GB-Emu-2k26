@@ -13,3 +13,7 @@ add_executable(gbemu ${SOURCES})
 
 target_include_directories(gbemu PRIVATE ${SDL2_INCLUDE_DIRS})
 target_link_libraries(gbemu PRIVATE ${SDL2_LIBRARIES})
+
+if(WIN32)
+    target_link_libraries(gbemu PRIVATE Comdlg32)
+endif()

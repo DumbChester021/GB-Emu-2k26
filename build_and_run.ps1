@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 # Configuration
 $VcpkgUrl = "https://github.com/microsoft/vcpkg.git"
 $VcpkgPath = Join-Path $PSScriptRoot "vcpkg"
-$BuildDir = Join-Path $PSScriptRoot "build"
+$BuildDir = Join-Path $PSScriptRoot "build_win"
 $Executable = Join-Path $BuildDir "Release\gbemu.exe" # CMake on Windows usually adds Release/Debug folder
 
 # Check for prerequisites
@@ -35,23 +35,27 @@ if (-not (Test-Path "$VcpkgPath\vcpkg.exe")) {
 Write-Host "Installing dependencies (SDL2)..."
 & "$VcpkgPath\vcpkg.exe" install sdl2:x64-windows
 
-# 3. Configure CMake
-Write-Host "Configuring CMake..."
-if (-not (Test-Path $BuildDir)) {
-    New-Item -ItemType Directory -Path $BuildDir | Out-Null
+# 3. Clean and Configure
+Write-Host "Cleaning previous build..."
+Stop-Process -Name "gbemu" -ErrorAction SilentlyContinue
+if (Test-Path $BuildDir) {
+    Remove-Item -Recurse -Force $BuildDir
 }
+New-Item -ItemType Directory -Path $BuildDir | Out-Null
 
+Write-Host "Configuring CMake..."
 Set-Location $BuildDir
 cmake .. -DCMAKE_TOOLCHAIN_FILE="$VcpkgPath/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows -DCMAKE_BUILD_TYPE=Release
 
 # 4. Build
 Write-Host "Building project..."
-cmake --build . --config Release
+cmake --build . --config Release --parallel
 
 # 5. Run
 if (Test-Path $Executable) {
     Write-Host "Running Emulator..."
     & $Executable
-} else {
+}
+else {
     Write-Error "Executable not found at $Executable"
 }

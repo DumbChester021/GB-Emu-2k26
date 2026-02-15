@@ -1,5 +1,6 @@
 # Build
 build/
+build_win/
 cmake-build-*/
 *.o
 *.a
