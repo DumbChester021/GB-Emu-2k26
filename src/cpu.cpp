@@ -382,6 +382,9 @@ void CPU::handleInterrupts() {
     uint8_t ieReg = bus_.read(0xFFFF);
     uint8_t pending = ifReg & ieReg & 0x1F;
 
+
+
+
     if (pending != 0) {
         // Any pending interrupt wakes from HALT, even with IME=0
         halted_ = false;

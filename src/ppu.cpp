@@ -2,6 +2,7 @@
 #include <cstring>
 #include <algorithm>
 
+
 // ══════════════════════════════════════════════════════════════════════
 // Main tick() — advance PPU by exactly 1 T-cycle (dot)
 //
@@ -15,6 +16,7 @@
 //   • LYC comparison runs every dot when LCD is on
 //   • LCD off: retains coincidence flag, stops comparison clock
 // ══════════════════════════════════════════════════════════════════════
+
 
 void PPU::tick() {
     if (!(lcdc_ & 0x80)) {
@@ -32,7 +34,7 @@ void PPU::tick() {
         return;
     }
 
-    // LCD just turned on — special first-frame initialization
+    // LCD just turned on — single dead tick for initialization
     if (lcdWasOff_) {
         lcdWasOff_ = false;
         ly_ = 0;
@@ -47,7 +49,6 @@ void PPU::tick() {
         spriteFetchPending_ = false;
 
         // Line 0 after LCD enable starts in mode 0 briefly
-        // The PPU is "late" by a couple dots
         mode_ = MODE_HBLANK;
         stat_ = (stat_ & 0xFC) | MODE_HBLANK;
 
@@ -83,7 +84,7 @@ void PPU::tickOAMSearch() {
         // (OAM_DOTS=80 + 4 pre-OAM dots)
         setMode(MODE_XFER);
         mode3StartDot_ = dotCounter_;
-        mode3PenaltyDots_ = 5;  // Initial penalty: delays first pixel to dot 12
+        mode3PenaltyDots_ = 5;  // Initial penalty: 12 dots total before first pixel
 
         // ── Sprite mode 3 penalties ─────────────────────────────────
         // On DMG, each sprite extends mode 3. The cost per sprite is:
@@ -186,7 +187,7 @@ void PPU::tickHBlank() {
             firstLineShorter_ = true;  // First line is 448 dots, not 456
             setMode(MODE_XFER);
             mode3StartDot_ = dotCounter_;
-            mode3PenaltyDots_ = 5;  // Initial penalty: delays first pixel
+            mode3PenaltyDots_ = 5;  // Initial penalty: 12 dots total before first pixel
             pixelX_ = 0;
             discardPixels_ = scx_ & 7;
             bgFifo_.clear();
@@ -566,6 +567,8 @@ void PPU::updateStatIRQ() {
             *ifReg_ |= 0x02;
         }
     }
+
+
 
     statIrqLine_ = line;
 }

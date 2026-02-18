@@ -31,6 +31,8 @@ bool MemoryBus::loadBootrom(const std::string& path) {
 
     bootromLoaded_ = true;
     bootromActive_ = true;
+    ppu_.resetForBootrom();
+    timer_.resetForBootrom();
     return true;
 }
 

@@ -22,6 +22,26 @@ public:
     // Provide a pointer to the IF register (FF0F) in IO memory
     void connectIF(uint8_t* ifReg) { ifReg_ = ifReg; }
 
+    // Reset PPU to power-on state for boot ROM execution.
+    void resetForBootrom() {
+        lcdc_ = 0x00;
+        stat_ = 0x00;
+        scy_  = 0x00;  scx_  = 0x00;
+        ly_   = 0x00;  lyc_  = 0x00;
+        dma_  = 0x00;
+        bgp_  = 0x00;  obp0_ = 0x00;  obp1_ = 0x00;
+        wy_   = 0x00;  wx_   = 0x00;
+        mode_ = MODE_HBLANK;
+        lcdWasOff_ = true;
+        dotCounter_ = 0;
+        statIrqLine_ = false;
+        frameReady_ = false;
+        firstLineAfterEnable_ = false;
+        firstLineShorter_ = false;
+        windowTriggered_ = false;
+        windowLineCounter_ = 0;
+    }
+
     // Advance the PPU by exactly 1 T-cycle
     void tick();
 
@@ -48,6 +68,7 @@ public:
     // ── State queries ───────────────────────────────────────────────
     uint8_t currentMode() const { return mode_; }
     uint8_t currentLY()   const { return ly_; }
+    int     currentDot()  const { return dotCounter_; }
     bool    lcdEnabled()  const { return lcdc_ & 0x80; }
 
     // Save state serialization

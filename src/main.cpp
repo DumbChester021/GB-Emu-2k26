@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cmath>
 #include <string>
 
 #include "cartridge.h"
@@ -174,7 +175,7 @@ int runEmulator(const std::string& romPath) {
 
     SDL_Renderer* renderer = SDL_CreateRenderer(
         window, -1,
-        SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC
+        SDL_RENDERER_ACCELERATED
     );
     if (!renderer) {
         std::fprintf(stderr, "SDL_CreateRenderer Error: %s\n", SDL_GetError());
@@ -221,6 +222,18 @@ int runEmulator(const std::string& romPath) {
     } else {
         SDL_PauseAudioDevice(audioDevice, 0);  // Start playback
     }
+
+    // ── Frame pacing ─────────────────────────────────────────────────
+    // Game Boy: 4,194,304 Hz CPU / 70,224 T-cycles per frame ≈ 59.7275 Hz
+    constexpr double GB_FPS = 4194304.0 / 70224.0;  // ~59.7275 Hz
+    const uint64_t perfFreq = SDL_GetPerformanceFrequency();
+    const double targetFrameTime = static_cast<double>(perfFreq) / GB_FPS;
+    uint64_t frameStart = SDL_GetPerformanceCounter();
+    double frameTimeAccum = 0.0;  // sub-tick error accumulator
+
+    // FPS counter
+    uint64_t fpsLastTime = frameStart;
+    int fpsFrameCount = 0;
 
     bool running = true;
     SDL_Event event;
@@ -331,6 +344,44 @@ int runEmulator(const std::string& romPath) {
 
             // --- Dirty-flag battery save (flush after idle) ---
             cartridge->tickBatterySave();
+
+            // --- FPS display (every ~1 second) ---
+            fpsFrameCount++;
+            uint64_t now = SDL_GetPerformanceCounter();
+            double elapsed = static_cast<double>(now - fpsLastTime) / perfFreq;
+            if (elapsed >= 1.0) {
+                double fps = fpsFrameCount / elapsed;
+                char titleBuf[128];
+                std::snprintf(titleBuf, sizeof(titleBuf), "%s  [%.2f FPS]",
+                              windowTitle.c_str(), fps);
+                SDL_SetWindowTitle(window, titleBuf);
+                fpsFrameCount = 0;
+                fpsLastTime = now;
+            }
+        }
+
+        // ── Frame pacing: sleep until the next frame boundary ────────
+        {
+            frameTimeAccum += targetFrameTime;
+            uint64_t targetTicks = static_cast<uint64_t>(frameTimeAccum);
+            frameTimeAccum -= targetTicks;  // keep fractional remainder
+
+            uint64_t frameEnd = SDL_GetPerformanceCounter();
+            int64_t remaining = static_cast<int64_t>(frameStart + targetTicks) - static_cast<int64_t>(frameEnd);
+
+            if (remaining > 0) {
+                // Coarse sleep (leave ~1.5ms for spin-wait)
+                double remainingMs = (static_cast<double>(remaining) / perfFreq) * 1000.0;
+                if (remainingMs > 2.0) {
+                    SDL_Delay(static_cast<uint32_t>(remainingMs - 1.5));
+                }
+                // Spin-wait for precise timing
+                while (SDL_GetPerformanceCounter() < frameStart + targetTicks) {
+                    // busy-wait
+                }
+            }
+
+            frameStart += targetTicks;
         }
     }
 

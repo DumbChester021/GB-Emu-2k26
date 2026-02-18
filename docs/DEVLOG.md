@@ -40,7 +40,7 @@ A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2 for disp
 | `cpu_tables.cpp` | 388 | Opcode metadata tables |
 | `memory_bus.cpp` | 395 | Bus routing, IO registers, DMA, subsystem integration |
 | `cpu.h` | 327 | CPU class declaration, registers |
-| `main.cpp` | 305 | SDL2 window, audio, render loop, input |
+| `main.cpp` | 355 | SDL2 window, audio, render loop, input, frame pacing |
 | `ppu.h` | 205 | PPU class declaration, FIFO, sprites, state |
 | `apu_serialize.cpp` | 130 | APU save state serialization |
 | `timer.cpp` | 138 | DIV/TIMA timer with falling-edge detection |
@@ -95,6 +95,9 @@ A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2 for disp
   - 2 M-cycle startup delay before bus conflict takes effect
   - OAM is blocked (returns 0xFF) only after startup delay
   - DMA from echo RAM region (≥0xE000) maps through `src & ~0x2000`
+- **Boot ROM support**: Loads optional DMG boot ROM from `dmg_boot.bin`
+  - PPU and Timer reset to power-on state via `resetForBootrom()`
+  - Boot ROM overlay disabled when game writes to FF50
 
 ### Timer (`timer.cpp`, `timer.h`)
 - Falling-edge detection on internal counter bit for TIMA increment
@@ -116,6 +119,12 @@ A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2 for disp
   - Length counters writable even when APU is powered off (DMG behavior)
 - **Audio Pipeline**: T-cycle accurate → downsample to 44100 Hz → NR50/NR51 stereo mix → high-pass filter (DC offset removal) → lock-free SPSC ring buffer → SDL audio callback
 - **Master Power Control**: NR52 bit 7 enables/disables APU; powering off zeros all registers (wave RAM preserved on DMG)
+
+### Main Loop (`main.cpp`)
+- **Frame Pacing**: Hardware-accurate ~59.7275 Hz (4194304 / 70224) using SDL performance counters
+  - Coarse SDL_Delay for bulk wait, spin-wait for sub-millisecond precision
+  - Sub-tick error accumulator prevents long-term drift
+- **FPS Display**: Updates window title with current FPS every ~1 second
 
 ---
 

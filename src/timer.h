@@ -35,6 +35,16 @@ public:
     uint8_t read(uint16_t addr) const;
     void    write(uint16_t addr, uint8_t val);
 
+    // Reset timer to power-on state for boot ROM execution.
+    // SameBoy initializes div_counter to 8 at reset, representing
+    // hardware initialization cycles before the CPU starts.
+    void resetForBootrom() {
+        sysCounter_ = 8;
+    }
+
+    // Debug accessor
+    uint16_t sysCounter() const { return sysCounter_; }
+
     // Save state serialization
     void serialize(SaveState& ss) const;
     void deserialize(SaveState& ss);
