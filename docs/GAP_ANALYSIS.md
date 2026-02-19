@@ -1,11 +1,12 @@
 # GB-Emu-2k26 — Gap Analysis for Mooneye Compliance
 
 > **Current Score: 91/94 DMG-ABC tests passing**
-> **Target: All Mooneye DMG tests**
+> **Target: All Mooneye DMG tests (94/94)**
+> **Last Updated: 2026-02-19**
 
 ---
 
-## Current Test Results (2026-02-13)
+## Current Test Results (2026-02-19)
 
 | Category | Pass | Total | Status |
 |----------|------|-------|--------|
@@ -22,152 +23,145 @@
 | MBC5 | 8 | 8 | ✅ Perfect |
 | Interrupts | 3 | 3 | ✅ Perfect |
 | OAM DMA | 6 | 6 | ✅ Perfect |
-| PPU | 12 | 12 | ✅ Perfect |
-| Boot Regs (DMG) | 1 | 2 | 🟡 DMG0 variant |
-| Boot DIV (DMG) | 0 | 2 | 🔴 Both failing |
-| Boot HWIO (DMG) | 0 | 2 | 🔴 Both failing |
+| PPU | 11 | 12 | 🟡 1 failing |
+| Boot Regs (DMG-ABC) | 1 | 1 | ✅ Perfect |
+| Boot DIV (DMG-ABC) | 1 | 1 | ✅ Perfect |
+| Boot HWIO (DMG-ABC) | 0 | 1 | 🔴 Failing |
 | Serial | 0 | 1 | 🔴 Failing |
-
----
-
-## Failing Tests — Prioritized by Hardware Accuracy Impact
-
-### ✅ Priority 1: OAM DMA Bus Conflicts — COMPLETED
-**Fixed tests:** `sources-GS`, `reg_read`, `oam_dma_restart`, `oam_dma_timing`, `oam_dma_start` (all passing)
-
-**What was done:**
-Implemented SameBoy-style per-bus conflict detection. On DMG, the DMA controller owns one of two external buses (MAIN or VRAM). CPU reads from the conflicting bus return `dmaLastByte_` (the last byte DMA transferred). OAM is blocked only after the 2 M-cycle startup delay. DMA from echo RAM region (≥0xE000) now maps through `srcAddr & ~0x2000`.
-
-Fixed `oam_dma_start` by adding `dmaRestarting_` flag: when DMA is restarted mid-transfer, OAM stays blocked through the new DMA's startup delay (because the previous DMA was already blocking). For fresh DMA, OAM is accessible during startup since `dmaDelay_ > 0`.
-
-**Difficulty:** Complete
-
----
-
-### ✅ Priority 2: Sprite Mode 3 Penalties — COMPLETED
-**Fixed test:** `intr_2_mode0_timing_sprites` (now passing)
-
-**What was done:**
-Implemented per-sprite mode 3 penalty computation at OAM→XFER transition. Each sprite on a scanline adds 6 dots (fixed sprite fetch cost) plus an alignment cost of `max(0, 5 - (X + SCX) % 8)` dots. Sprites at the same X position share the alignment cost. Sprites at X ≥ 168 (off-screen right) receive zero penalty.
-
-The penalty formula was verified against all 105 test cases in the Mooneye test ROM with 100% accuracy.
-
-**Difficulty:** Complete
-
----
-
-### ✅ Priority 3: LCD Enable Timing — COMPLETED
-**Fixed tests:** `lcdon_timing-GS`, `lcdon_write_timing-GS` (both passing)
-
-**What was done:**
-Implemented accurate first-line-after-LCD-enable timing: 78-dot mode 0 → mode 3, 448-dot line, no sprite evaluation. Added 4-dot pre-OAM transition delay on normal lines (STAT stays mode 0 for dots 1-3, mode 2 at dot 4). Shifted mode 3 start from dot 80 to dot 84. Delayed LYC coincidence check to dot 4 at line boundaries.
-
-Implemented asymmetric OAM/VRAM access pre-blocking matching SameBoy's separate blocked flags:
-- OAM reads: blocked 1 dot before mode 2 (dots 3-4 during pre-OAM transition)
-- VRAM reads: blocked 1 dot before mode 3 (dot 83+, while STAT still shows mode 2)
-- OAM writes: blocked during mode 2 up to dot 82 only (unblocked at dot 83 before mode 3)
-- VRAM writes: blocked only during actual mode 3 (no pre-blocking)
-
-**Impact:** Also fixed the `hblank_ly_scx_timing-GS` regression — the pre-OAM delay corrected the CPU-PPU phase alignment.
-
-**Difficulty:** Complete
-
----
-
-### ✅ Priority 4: `hblank_ly_scx_timing-GS` — COMPLETED (Fixed alongside Priority 3)
-**Fixed test:** `hblank_ly_scx_timing-GS` (now passing)
-
-**What was done:**
-The 4-dot pre-OAM transition delay from Priority 3 fixed the CPU-PPU phase alignment that was causing this test to fail. No additional changes needed.
-
-**Difficulty:** Complete
-
----
-
-### ✅ Priority 5: `stat_lyc_onoff` — COMPLETED
-**Fixed test:** `stat_lyc_onoff` (now passing)
-
-**What was done:**
-Fixed STAT IRQ line state management during LCD toggle. The root cause was `statIrqLine_` being unconditionally reset to `false` during every LCD-off tick in `tick()`. This caused spurious rising edges when the LCD was re-enabled with a retained coincidence flag (flag was already set before LCD off, stayed set after LCD on → no real transition, but false→true edge was detected).
-
-Fix: (1) Removed `statIrqLine_ = false` from the LCD-off tick path. (2) When LCD turns off in `writeReg()`, freeze `statIrqLine_` based on the retained coincidence flag state (`(stat_ & 0x40) && (stat_ & 0x04)`). Mode sources are inactive when the PPU is stopped, so only LYC coincidence contributes.
-
-**Difficulty:** Complete
-
----
-
-### ✅ Priority 6: `tima_write_reloading` — COMPLETED
-**Fixed test:** `tima_write_reloading` (now passing)
-
-**What was done:**
-Fixed TIMA write behavior during the TMA reload cycle. The DMG timer has two distinct behavioral windows after TIMA overflow:
-- **Cycle A** (overflow pending, before reload): Writing TIMA cancels the pending reload and IF flag
-- **Cycle B** (TMA→TIMA reload cycle): Writing TIMA is ignored — TMA's value wins
-
-The bug was that `Timer::write()` treated ALL writes during `overflowPending_` as cycle A (cancellation). Added a `reloadedThisCycle_` guard: if the reload already happened this cycle, the CPU write is ignored and TMA keeps its value.
-
-**Difficulty:** Complete
-
----
-
-### ✅ Priority 7: `ie_push` — COMPLETED
-**Fixed test:** `ie_push` (now passing)
-
-**What was done:**
-Rewrote `handleInterrupts()` to split the two-byte PC push into individual writes and re-read IE between them. After the high byte of PC is pushed, IE is re-read. If the push wrote to 0xFFFF (because SP was 0x0000), the new IE value determines which interrupt is dispatched — or cancels dispatch entirely (PC→0x0000, IF untouched).
-
-**Difficulty:** Complete
-
----
-
-### ⚪ Priority 8: Boot Tests — DMG0/Boot DIV/Boot HWIO (LOW IMPACT)
-**Failing tests:** `boot_regs-dmg0`, `boot_div-dmg0`, `boot_div-dmgABCmgb`, `boot_hwio-dmg0`, `boot_hwio-dmgABCmgb`
-
-**What's missing:**
-- `boot_regs-dmg0`: We emulate DMG-ABC, not DMG-0 (original revision). DMG-0 has different initial register values.
-- `boot_div-*`: The DIV register should have a specific value after the bootrom finishes. Our bootrom execution may not produce the exact T-cycle count needed.
-- `boot_hwio-*`: After bootrom, certain IO registers should have specific values.
-
-**Why it matters:**
-- 5 failures, but these are **bootrom-dependent** edge cases
-- DMG-0 is a different hardware revision — irrelevant for DMG-ABC accuracy
-- `boot_div` and `boot_hwio` depend on exact bootrom execution time, which requires matching the exact bootrom timing cycle-for-cycle
-- Very unlikely to affect any commercial game (games don't depend on initial DIV value)
-
-**Difficulty:** `boot_div`/`boot_hwio` are Medium (bootrom cycle counting), `boot_regs-dmg0` requires implementing a DMG-0 mode
-
----
-
-### ⚪ Priority 9: Serial `boot_sclk_align-dmgABCmgb` (LOW IMPACT)
-**Failing test:** `boot_sclk_align-dmgABCmgb`
-
-**What's missing:**
-Serial clock alignment after bootrom. The serial transfer shift clock should be synchronized to a specific phase relative to DIV after boot.
-
-**Why it matters:**
-- No games depend on serial clock alignment relative to DIV
-- Serial is mainly used for link cable (Game Boy↔Game Boy communication)
-- Proper serial implementation would require a full serial shift register with clock divider
-
-**Difficulty:** Medium — but very low value for game compatibility
-
----
-
-## Summary — What to Tackle and In What Order
-
-| # | Feature | Tests Fixed | Difficulty | Game Impact |
-|---|---------|-------------|------------|-------------|
-| 1 | ~~**OAM DMA bus conflicts**~~ | ✅ all done | ~~Medium~~ | ✅ Completed — all 6 tests pass |
-| 2 | ~~**Sprite mode 3 penalties**~~ | ✅ done | ~~Medium~~ | ✅ Completed — sprite test passes |
-| 3 | ~~**LCD enable timing**~~ | ✅ +3 done | ~~Medium-Hard~~ | ✅ Completed — lcdon + hblank pass |
-| 4 | ~~**STAT LYC on/off**~~ | ✅ done | ~~Medium~~ | ✅ Completed — PPU now 12/12 |
-| 5 | ~~**TIMA write during reload**~~ | ✅ done | ~~Easy-Medium~~ | ✅ Completed — timer now 13/13 |
-| 6 | ~~**IE push edge case**~~ | ✅ done | ~~Medium~~ | ✅ Completed — interrupts now 3/3 |
-| 7 | **Boot register/DIV/HWIO** | +5 | Medium | Very Low — bootrom-only |
-| 8 | **Serial clock alignment** | +1 | Medium | Very Low — link cable only |
-
-> [!TIP]
-> **All high-priority items are resolved.** Remaining 3 failures are boot/serial edge cases with very low game compatibility impact.
+| **Blargg dmg_sound** | **12** | **12** | ✅ **Perfect** |
+| Blargg cpu_instrs | all | all | ✅ Perfect |
+| Blargg instr_timing | 1 | 1 | ✅ Perfect |
+| Blargg mem_timing | all | all | ✅ Perfect |
 
 > [!NOTE]
-> **APU is now fully implemented**: Hardware-accurate DMG APU with all 4 channels (pulse×2, wave, noise), frame sequencer, stereo mixing, and SDL2 audio output.
+> DMG-0 and SGB/MGB-only variant tests are excluded from this count. We target DMG-B (same as SameBoy). See [SameBoy Cross-Reference](#sameboy-cross-reference) section below.
+
+---
+
+## Failing Tests — 3 Remaining
+
+### 🔴 Priority 1: `hblank_ly_scx_timing-GS` (PPU)
+
+**Status:** FAILING — was previously fixed, has regressed
+**SameBoy DMG-B:** ✅ PASS — **this is a real bug, NOT a variant issue**
+**Suffix `-GS`:** Applies to DMG+MGB+SGB+SGB2
+
+**What it tests:**
+HBlank timing and LY register updates as a function of SCX scroll values. Mode 3 length depends on `SCX % 8`, which shifts when HBlank begins. The test measures LY changes at specific cycle offsets after synchronizing to a known PPU phase.
+
+**Root cause analysis:**
+The test was previously passing after Fix 6 (LCD enable timing + 4-dot pre-OAM delay). It has since regressed, likely due to a subtle timing change in the PPU state machine affecting the CPU-PPU phase alignment for HBlank transitions.
+
+**Fix approach:**
+1. Add cycle traces at HBlank→new scanline transition with various SCX values
+2. Compare PPU dot counter at LY increment against SameBoy's behavior
+3. The mode 3 duration formula `172 + (SCX % 8) + sprite_penalties` may need re-verification
+4. Check if the 4-dot pre-OAM delay is still correctly applied
+
+**Difficulty:** Medium-Hard — subtle per-dot PPU timing issue
+**Game Impact:** Medium — affects scroll-heavy games
+
+---
+
+### 🔴 Priority 2: `boot_hwio-dmgABCmgb` (Boot HWIO)
+
+**Status:** FAILING
+**SameBoy DMG-B:** ✅ PASS — **real bug, NOT variant-related**
+**Suffix `-dmgABCmgb`:** Applies to DMG-A/B/C + MGB (NOT DMG-0)
+
+**What it tests:**
+Checks ALL hardware I/O registers (`0xFF00`–`0xFF7F`) for their expected values immediately after the boot ROM finishes executing.
+
+**Root cause analysis:**
+One or more I/O registers are not initialized to the correct post-boot state. Likely related to the `boot_sclk_align` failure — the serial register (`SC` at `0xFF02`) or other I/O registers may have wrong initial values.
+
+**Fix approach:**
+1. Run the test with verbose tracing to identify which specific register(s) have wrong values
+2. Cross-reference expected post-boot values against [Pan Docs](https://gbdev.io/pandocs/Power_Up_Sequence.html) and SameBoy's `GB_reset_internal_state()` in `gb.c`
+3. Fix register initialization in `MemoryBus` constructor or boot ROM execution path
+
+**Difficulty:** Easy-Medium — once the wrong register is identified, the fix is straightforward
+**Game Impact:** Very Low — games don't depend on exact I/O state after boot
+
+---
+
+### 🔴 Priority 3: `boot_sclk_align-dmgABCmgb` (Serial)
+
+**Status:** FAILING
+**SameBoy DMG-B:** ✅ PASS — **real bug, NOT variant-related**
+**Suffix `-dmgABCmgb`:** Applies to DMG-A/B/C + MGB (NOT DMG-0)
+
+**What it tests:**
+The serial transfer clock alignment state after the boot ROM finishes. Verifies that the internal serial shift clock phase is correct relative to DIV after boot.
+
+**Root cause analysis:**
+The serial transfer control register (`SC` at `0xFF02`) or the internal serial shift register clock phase is not correctly initialized. This may be fixed automatically by fixing `boot_hwio` if the wrong register is SC.
+
+**Fix approach:**
+1. Check if fixing `boot_hwio` fixes this test too (likely related)
+2. If not, implement proper serial shift register with clock divider phase tracking
+3. Ensure SC register initial value matches DMG-B post-boot state
+
+**Difficulty:** Medium — may require implementing serial clock phase tracking
+**Game Impact:** Very Low — no games depend on serial clock alignment
+
+---
+
+## Completed Fixes
+
+| # | Feature | Tests Fixed | Status |
+|---|---------|-------------|--------|
+| 1 | **OAM DMA bus conflicts** | `sources-GS`, `reg_read`, `oam_dma_restart`, `oam_dma_timing`, `oam_dma_start` | ✅ All 6 pass |
+| 2 | **Sprite mode 3 penalties** | `intr_2_mode0_timing_sprites` | ✅ Pass |
+| 3 | **LCD enable timing** | `lcdon_timing-GS`, `lcdon_write_timing-GS` | ✅ Both pass |
+| 4 | **STAT LYC on/off** | `stat_lyc_onoff` | ✅ Pass |
+| 5 | **TIMA write during reload** | `tima_write_reloading` | ✅ Pass |
+| 6 | **IE push edge case** | `ie_push` | ✅ Pass |
+| 7 | **Boot DIV** | `boot_div-dmgABCmgb` | ✅ Now passing |
+
+---
+
+## SameBoy Cross-Reference
+
+### Variant Confirmation
+
+SameBoy **only implements `GB_MODEL_DMG_B`** (source: [`Core/model.h`](https://github.com/LIJI32/SameBoy/blob/master/Core/model.h)). DMG-0, DMG-A, DMG-C are commented out. SameBoy passes **all 94 Mooneye DMG acceptance tests** we run.
+
+**All 3 of our failures are genuine bugs, not DMG variant differences.**
+
+### DMG Revision Differences (for reference)
+
+| Feature | DMG-0 | DMG-A | DMG-B | DMG-C |
+|---------|-------|-------|-------|-------|
+| Boot logo ® | ❌ | ✅ | ✅ | ✅ |
+| Wave RAM retrigger | Different | "Wave glitch" | ✅ Normal | Same as B |
+| CPU/PPU/Timer | Same | Same | Same | Same |
+
+Only boot ROM and APU wave behavior differ between DMG revisions. Everything else is identical.
+
+### Mooneye Naming Convention
+
+| Suffix | Models | Description |
+|--------|--------|-------------|
+| (none) | All | Universal test |
+| `-GS` | DMG+MGB+SGB+SGB2 | G=DMG+MGB, S=SGB family |
+| `-dmg0` | DMG-0 | Earliest revision only |
+| `-dmgABC` | DMG-A/B/C | Post-0 DMG |
+| `-dmgABCmgb` | DMG-A/B/C+MGB | Our target |
+| `-C` | CGB+AGB+AGS | Game Boy Color family |
+
+---
+
+## What to Tackle Next
+
+| # | Test | Difficulty | Game Impact | Recommended? |
+|---|------|------------|-------------|--------------|
+| 1 | `hblank_ly_scx_timing-GS` | Medium-Hard | Medium | ✅ Yes — PPU accuracy |
+| 2 | `boot_hwio-dmgABCmgb` | Easy-Medium | Very Low | 🟡 Optional |
+| 3 | `boot_sclk_align-dmgABCmgb` | Medium | Very Low | 🟡 Optional |
+
+> [!TIP]
+> **Start with `hblank_ly_scx_timing-GS`** — it's the highest-impact remaining failure and tests core PPU behavior that affects real games. The boot/serial tests are edge cases with negligible game impact.
+
+> [!NOTE]
+> **APU is fully implemented**: Hardware-accurate DMG APU with all 4 channels, frame sequencer, stereo mixing, and SDL2 audio output. **Blargg `dmg_sound` 12/12 passing** — all tests match SameBoy output.

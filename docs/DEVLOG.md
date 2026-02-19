@@ -1,6 +1,6 @@
 # GB-Emu-2k26 — Development Log & Architecture Reference
 
-> **Last Updated:** 2026-02-13  
+> **Last Updated:** 2026-02-19  
 > **Purpose:** Capture all development context, architecture decisions, hard-won bug fixes, and remaining work so future sessions can continue efficiently without re-discovering past findings.
 
 ---
@@ -130,12 +130,14 @@ A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2 for disp
 
 ## Test Results Summary
 
-### Mooneye Test Suite (mts-20240926) — As of 2026-02-13
+### Mooneye Test Suite (mts-20240926) — As of 2026-02-19
 
-#### PPU Tests: **12/12 PASSING** ✅
+**Grand Total: 91/94 DMG-ABC tests passing**
+
+#### PPU Tests: **11/12 PASSING** 🟡
 | Test | Status | Notes |
 |------|--------|-------|
-| `hblank_ly_scx_timing-GS` | ✅ PASS | Fixed by pre-OAM transition delay |
+| `hblank_ly_scx_timing-GS` | ❌ FAIL | Was fixed by pre-OAM delay, regressed — needs re-investigation |
 | `intr_1_2_timing-GS` | ✅ PASS | Fixed by VBlank OAM pulse |
 | `intr_2_0_timing` | ✅ PASS | Fixed by mode 3 penalty (172 dots) |
 | `intr_2_mode0_timing` | ✅ PASS | Fixed by read-before-tick CPU ordering |
@@ -157,8 +159,16 @@ All MBC1 emulator-only tests pass.
 #### Interrupt Tests: **3/3 PASSING** ✅
 All 3 interrupt tests pass (including `ie_push`).
 
-#### Acceptance Root: **33/34 DMG-ABC PASSING** (excludes SGB/DMG0/MGB variants)
-- 2 failures: `boot_div-dmgABCmgb`, `boot_hwio-dmgABCmgb`
+#### Blargg Tests: **ALL PASSING** ✅
+- `dmg_sound` 12/12 — all tests match SameBoy output
+- `cpu_instrs` — all passing
+- `instr_timing` — passing
+- `mem_timing` / `mem_timing-2` — passing
+
+#### Boot/Serial Tests: **2/3 DMG-ABC PASSING** 🟡
+- ✅ `boot_regs-dmgABC`, ✅ `boot_div-dmgABCmgb`
+- ❌ `boot_hwio-dmgABCmgb` — I/O register state after boot is incorrect
+- ❌ `boot_sclk_align-dmgABCmgb` — Serial clock alignment after boot is incorrect
 
 ---
 
@@ -427,22 +437,28 @@ The test has 4 rounds:
 
 ## Known Issues & Remaining Work
 
-### PPU Failures (0 remaining)
+### PPU Failures (1 remaining)
 
-All 12/12 PPU tests now pass. ✅
+- ❌ `hblank_ly_scx_timing-GS` — HBlank/LY timing with SCX scroll. Was previously fixed by pre-OAM transition delay, has regressed. SameBoy passes this test with DMG-B — **this is a real PPU bug, not a variant issue.**
 
 ### APU — ✅ Implemented
 
-Full DMG APU with all 4 channels, frame sequencer, register I/O, stereo mixing, and SDL2 audio output. **Hardware-accurate** with DMG edge cases (sweep negate quirk, extra length clocking, wave RAM conflicts, DAC enable logic).
+Full DMG APU with all 4 channels, frame sequencer, register I/O, stereo mixing, and SDL2 audio output. **Hardware-accurate** with DMG edge cases (sweep negate quirk, extra length clocking, wave RAM conflicts, DAC enable logic). **Blargg `dmg_sound` 12/12 passing** — all tests match SameBoy output.
 
-### Other Failures
+### Boot/Serial Failures (2 remaining)
+
+- ❌ `boot_hwio-dmgABCmgb` — Some I/O registers have incorrect post-boot state. SameBoy passes this — **real bug, not variant-related.** Likely one or more I/O registers in `0xFF00–0xFF7F` not initialized to the correct DMG post-boot values.
+- ❌ `boot_sclk_align-dmgABCmgb` — Serial clock alignment after boot is wrong. SameBoy passes this — **real bug.** The serial transfer control register (`SC` at `0xFF02`) or internal serial shift clock phase is incorrect after boot. May be related to `boot_hwio` failure (fixing I/O init state could fix both).
+
+### Completed Fixes
 
 - ~~**`tima_write_reloading`**~~: ✅ Fixed (Fix 8)
 - ~~**`ie_push`**~~: ✅ Fixed (Fix 9)
-- **Boot register tests**: We emulate DMG-ABC, not SGB/DMG0/MGB variants
+- ~~**`boot_div-dmgABCmgb`**~~: ✅ Now passing
 
 ### Not Yet Implemented
 - **Sub-M-cycle bus accuracy**: CPU reads at T3 of M-cycle, not T0 or T4
+- **CGB (Game Boy Color)**: See SameBoy Variant Research below for CGB model roadmap
 
 ---
 
@@ -587,3 +603,70 @@ done
 ```bash
 ./build/gbemu path/to/rom.gb
 ```
+
+---
+
+## SameBoy DMG Variant Research (2026-02-19)
+
+> Cross-reference analysis comparing our emulator against SameBoy to confirm whether failures are real bugs or variant-specific behavior.
+
+### SameBoy Model Architecture
+
+SameBoy defines its models in [`Core/model.h`](https://github.com/LIJI32/SameBoy/blob/master/Core/model.h). For DMG, **only `GB_MODEL_DMG_B` (0x002) is implemented**. DMG-0, DMG-A, and DMG-C are commented out:
+
+```c
+typedef enum {
+    // GB_MODEL_DMG_0 = 0x000,  // NOT IMPLEMENTED
+    // GB_MODEL_DMG_A = 0x001,  // NOT IMPLEMENTED
+    GB_MODEL_DMG_B = 0x002,     // ✅ Only active DMG model
+    // GB_MODEL_DMG_C = 0x003,  // NOT IMPLEMENTED
+} GB_model_t;
+```
+
+**Conclusion:** There is no "SameBoy does DMG differently" concern. It's the same DMG-B target as our emulator.
+
+### DMG Revision Differences
+
+| Feature | DMG-0 | DMG-A | DMG-B | DMG-C |
+|---------|-------|-------|-------|-------|
+| Boot logo ® symbol | ❌ Missing | ✅ Has | ✅ Has | ✅ Has |
+| Wave RAM retrigger corruption | Different pattern | Has "wave glitch" | ✅ No wave glitch | Same as B |
+| OAM bug behavior | Same | Same | Same | Same |
+| Timer behavior | Same | Same | Same | Same |
+| PPU timing | Same | Same | Same | Same |
+
+Key differences between DMG variants are **only** in the boot ROM and APU wave channel. CPU timing, PPU timing, timer, and memory bus behavior are identical across all DMG revisions.
+
+### Failing Test Cross-Reference vs SameBoy
+
+| Test | SameBoy DMG-B | Variant Issue? | Root Cause |
+|------|---------------|----------------|------------|
+| `hblank_ly_scx_timing-GS` | ✅ PASS | **No** | PPU HBlank/LY timing with SCX |
+| `boot_sclk_align-dmgABCmgb` | ✅ PASS | **No** | Serial clock init after boot |
+| `boot_hwio-dmgABCmgb` | ✅ PASS | **No** | I/O register post-boot state |
+
+**All 3 failures are genuine bugs.** None are caused by DMG variant differences.
+
+### Mooneye Test Naming Convention
+
+| Suffix | Target Models | Notes |
+|--------|---------------|-------|
+| (none) | Universal | Should pass on all models |
+| `-GS` | DMG+MGB+SGB+SGB2 | "G" = DMG+MGB, "S" = SGB+SGB2 |
+| `-dmg0` | DMG-0 only | Earliest DMG revision |
+| `-dmgABC` | DMG-A/B/C only | Post-0 DMG revisions |
+| `-dmgABCmgb` | DMG-A/B/C + MGB | Our target group |
+| `-S` | SGB+SGB2 only | Super Game Boy specific |
+| `-C` | CGB+AGB+AGS | Game Boy Color family |
+| `-A` | AGB+AGS only | Game Boy Advance only |
+
+### CGB Preparation Notes
+
+When ready for CGB support:
+- SameBoy supports **6 CGB revisions**: CGB-0, CGB-A, CGB-B, CGB-C, CGB-D, CGB-E
+- CGB-E is the most common real-world unit and best documented
+- Key CGB features: double speed mode, HDMA/GDMA, VRAM banking, palette RAM, CGB compatibility mode for DMG games
+- Mooneye has CGB-specific tests in `misc/` directory
+- Universal acceptance tests (no suffix) should still pass on CGB
+- SameBoy's model enum uses family masks: `GB_MODEL_DMG_FAMILY = 0x000`, `GB_MODEL_CGB_FAMILY = 0x200`
+
