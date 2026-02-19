@@ -157,6 +157,10 @@ private:
         // The byte currently being read by the wave channel
         uint8_t currentSample = 0;
 
+        // DMG: wave RAM access window (reads/writes only work within
+        // a few clocks of the frequency timer clocking)
+        int waveJustAccessed = 0;
+
         int output() const;
         void tickFrequency();
         void tickLengthCounter();
