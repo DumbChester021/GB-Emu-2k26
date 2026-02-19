@@ -435,3 +435,8 @@ char MemoryBus::consumeSerial() {
     serialReady_ = false;
     return static_cast<char>(io_[0x01]);
 }
+
+uint8_t MemoryBus::readCartridge(uint16_t addr) const {
+    if (cart_) return cart_->read(addr);
+    return 0xFF;
+}

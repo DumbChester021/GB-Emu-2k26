@@ -50,6 +50,9 @@ public:
     APU& apu() { return apu_; }
     const APU& apu() const { return apu_; }
 
+    // Direct cartridge read (bypasses bus conflicts) — for test runner polling
+    uint8_t readCartridge(uint16_t addr) const;
+
 private:
     Cartridge* cart_ = nullptr;
 

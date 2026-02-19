@@ -4,6 +4,7 @@
 #include <cstring>
 #include <cmath>
 #include <string>
+#include <sys/stat.h>
 
 #include "cartridge.h"
 #include "cpu.h"
@@ -91,6 +92,140 @@ int runTest(const std::string& romPath) {
     }
 
     std::printf("TIMEOUT: %s\n", romPath.c_str());
+    return 2;
+}
+
+// ── PPM framebuffer dump ─────────────────────────────────────────────
+static bool dumpFramebufferPPM(const PPU& ppu, const std::string& path) {
+    // Ensure parent directories exist
+    size_t lastSlash = path.find_last_of('/');
+    if (lastSlash != std::string::npos) {
+        std::string dir = path.substr(0, lastSlash);
+        mkdir(dir.c_str(), 0755);
+    }
+
+    FILE* f = std::fopen(path.c_str(), "wb");
+    if (!f) {
+        std::fprintf(stderr, "Failed to open %s for writing\n", path.c_str());
+        return false;
+    }
+
+    constexpr int W = 160, H = 144;
+    std::fprintf(f, "P6\n%d %d\n255\n", W, H);
+
+    const uint32_t* fb = ppu.framebuffer();
+    for (int i = 0; i < W * H; i++) {
+        uint32_t argb = fb[i];
+        uint8_t rgb[3] = {
+            static_cast<uint8_t>((argb >> 16) & 0xFF),  // R
+            static_cast<uint8_t>((argb >>  8) & 0xFF),  // G
+            static_cast<uint8_t>((argb      ) & 0xFF),  // B
+        };
+        std::fwrite(rgb, 1, 3, f);
+    }
+    std::fclose(f);
+    return true;
+}
+
+// ── Headless Blargg test runner ─────────────────────────────────────
+// Polls external RAM at $A000 for Blargg's memory-mapped test output.
+// Protocol: $A001-$A003 = signature DE B0 61 (valid when present)
+//           $A000       = status (0x80 = running, 0 = pass, else fail code)
+//           $A004+      = null-terminated text output
+int runBlarggTest(const std::string& romPath, const std::string& dumpPath) {
+    auto cartridge = Cartridge::loadFromFile(romPath);
+    if (!cartridge) {
+        std::fprintf(stderr, "Failed to load ROM: %s\n", romPath.c_str());
+        return 2;
+    }
+
+    MemoryBus bus;
+    bus.init();
+    bus.loadCartridge(&(*cartridge));
+
+    // Try to load bootrom
+    bus.loadBootrom("bootroms/dmg_boot.bin");
+
+    CPU cpu(bus);
+
+    // Run up to ~250 million cycles (≈60 seconds of Game Boy time)
+    // dmg_sound multi-ROM takes a while
+    constexpr uint64_t MAX_CYCLES = 250'000'000;
+    constexpr uint64_t POLL_INTERVAL = 1'000'000; // Check every ~1M cycles
+    uint64_t nextPoll = POLL_INTERVAL;
+
+    // Track serial output for single ROMs
+    std::string serialOutput;
+
+    while (cpu.totalCycles() < MAX_CYCLES) {
+        if (!cpu.tick()) {
+            if (cpu.hitUnimplemented()) {
+                std::fprintf(stderr, "UNIMPLEMENTED opcode — aborting test\n");
+                return 2;
+            }
+            break;
+        }
+
+        // Capture serial output
+        if (bus.hasSerialOutput()) {
+            char c = bus.consumeSerial();
+            serialOutput += c;
+        }
+
+        // Poll $A000 periodically
+        if (cpu.totalCycles() >= nextPoll) {
+            nextPoll = cpu.totalCycles() + POLL_INTERVAL;
+
+            // Check signature at $A001-$A003
+            uint8_t sig1 = bus.readCartridge(0xA001);
+            uint8_t sig2 = bus.readCartridge(0xA002);
+            uint8_t sig3 = bus.readCartridge(0xA003);
+
+            if (sig1 == 0xDE && sig2 == 0xB0 && sig3 == 0x61) {
+                uint8_t status = bus.readCartridge(0xA000);
+                if (status != 0x80) {
+                    // Test complete — read text output
+                    std::string text;
+                    for (int i = 0; i < 2048; i++) {
+                        char c = static_cast<char>(bus.readCartridge(0xA004 + i));
+                        if (c == '\0') break;
+                        text += c;
+                    }
+
+                    // Print results
+                    std::printf("=== Blargg Test: %s ===\n", romPath.c_str());
+                    std::printf("%s", text.c_str());
+                    if (!text.empty() && text.back() != '\n') std::printf("\n");
+                    std::printf("Result code: %d (%s)\n",
+                               status, status == 0 ? "PASSED" : "FAILED");
+
+                    // Dump LCD if requested
+                    if (!dumpPath.empty()) {
+                        // Run a few more frames to ensure the LCD has the final output
+                        for (uint64_t extra = 0; extra < 300'000; extra++) {
+                            cpu.tick();
+                        }
+                        if (dumpFramebufferPPM(bus.ppu(), dumpPath)) {
+                            std::printf("LCD dumped to: %s\n", dumpPath.c_str());
+                        }
+                    }
+
+                    return (status == 0) ? 0 : 1;
+                }
+            }
+        }
+    }
+
+    // Timeout — dump what we have
+    std::printf("TIMEOUT: %s\n", romPath.c_str());
+    if (!serialOutput.empty()) {
+        std::printf("Serial output collected:\n%s\n", serialOutput.c_str());
+    }
+    if (!dumpPath.empty()) {
+        if (dumpFramebufferPPM(bus.ppu(), dumpPath)) {
+            std::printf("LCD dumped to: %s\n", dumpPath.c_str());
+        }
+    }
     return 2;
 }
 
@@ -407,11 +542,17 @@ int runEmulator(const std::string& romPath) {
 int main(int argc, char* argv[]) {
     // ── Parse arguments ──────────────────────────────────────────────
     bool testMode = false;
+    bool blarggMode = false;
     std::string romPath;
+    std::string dumpLcdPath;
 
     for (int i = 1; i < argc; i++) {
         if (std::strcmp(argv[i], "--test") == 0) {
             testMode = true;
+        } else if (std::strcmp(argv[i], "--blargg") == 0) {
+            blarggMode = true;
+        } else if (std::strcmp(argv[i], "--dump-lcd") == 0 && i + 1 < argc) {
+            dumpLcdPath = argv[++i];
         } else {
             romPath = argv[i];
         }
@@ -423,6 +564,14 @@ int main(int argc, char* argv[]) {
             return 2;
         }
         return runTest(romPath);
+    }
+
+    if (blarggMode) {
+        if (romPath.empty()) {
+            std::fprintf(stderr, "Usage: gbemu --blargg [--dump-lcd <path.ppm>] <rom_path>\n");
+            return 2;
+        }
+        return runBlarggTest(romPath, dumpLcdPath);
     }
 
     // ── Normal mode ──────────────────────────────────────────────────
