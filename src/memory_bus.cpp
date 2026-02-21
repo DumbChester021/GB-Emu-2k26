@@ -330,12 +330,20 @@ void MemoryBus::write(uint16_t addr, uint8_t val) {
             return;
         }
 
-        // Serial transfer: capture output for test ROMs
-        if (addr == 0xFF02 && val == 0x81) {
-            char c = static_cast<char>(io_[0x01]); // SB = FF01
-            std::printf("%c", c);
-            std::fflush(stdout);
-            serialReady_ = true;
+        // Serial transfer: handle SC writes
+        if (addr == 0xFF02) {
+            // Capture Blargg debug output when $81 is written
+            if (val == 0x81) {
+                char c = static_cast<char>(io_[0x01]); // SB = FF01
+                std::printf("%c", c);
+                std::fflush(stdout);
+                serialReady_ = true;
+            }
+            // Reset bit counter when starting a new transfer
+            if ((val & 0x81) == 0x81) {
+                serialCount_ = 0;
+                // Note: do NOT reset serialMasterClock_ — it free-runs from reset
+            }
         }
 
         // Bootrom disable (FF50)
@@ -421,13 +429,35 @@ void MemoryBus::tick() {
         }
     }
 
-    // ── Serial transfer timer ────────────────────────────────────────
-    if (serialTimer_ > 0) {
-        serialTimer_--;
-        if (serialTimer_ == 0) {
-            io_[0x02] &= ~0x80; // Clear transfer-in-progress bit
-            io_[0x0F] |= 0x08;  // Request serial interrupt (IF bit 3)
+    // ── Serial transfer (DIV-aligned) ────────────────────────────────
+    // Serial clock is derived from falling edges of bit 9 of the system counter.
+    // The master clock toggle free-runs on every falling edge, regardless of
+    // whether a transfer is active (matching SameBoy behavior).
+    // On each falling edge of serial_master_clock, one bit is shifted.
+    // After 8 bits, SC bit 7 is cleared and serial interrupt fires.
+    {
+        bool currentBit = (timer_.sysCounter() & SERIAL_MASK) != 0;
+        if (prevSerialBit_ && !currentBit) {
+            // Falling edge of serial mask bit — ALWAYS toggle master clock
+            serialMasterClock_ = !serialMasterClock_;
+
+            // Only shift bits when transfer is active + internal clock
+            if (!serialMasterClock_ && (io_[0x02] & 0x81) == 0x81) {
+                // Falling edge of master clock — shift one bit
+                serialCount_++;
+
+                // Shift SB left, bring in 1 (no external device connected)
+                io_[0x01] = (io_[0x01] << 1) | 0x01;
+
+                if (serialCount_ >= 8) {
+                    // Transfer complete
+                    serialCount_ = 0;
+                    io_[0x02] &= ~0x80; // Clear transfer-in-progress bit
+                    io_[0x0F] |= 0x08;  // Request serial interrupt (IF bit 3)
+                }
+            }
         }
+        prevSerialBit_ = currentBit;
     }
 }
 

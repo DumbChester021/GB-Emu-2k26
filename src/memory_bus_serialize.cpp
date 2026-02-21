@@ -30,7 +30,8 @@ void MemoryBus::serialize(SaveState& ss) const {
 
     // Serial
     ss.writeBool(serialReady_);
-    ss.write<int32_t>(serialTimer_);
+    ss.writeBool(serialMasterClock_);
+    ss.write<uint8_t>(serialCount_);
 
     // OAM DMA state
     ss.writeBool(dmaActive_);
@@ -66,7 +67,8 @@ void MemoryBus::deserialize(SaveState& ss) {
 
     // Serial
     serialReady_ = ss.readBool();
-    serialTimer_ = ss.read<int32_t>();
+    serialMasterClock_ = ss.readBool();
+    serialCount_ = ss.read<uint8_t>();
 
     // OAM DMA state
     dmaActive_ = ss.readBool();

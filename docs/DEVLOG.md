@@ -1,6 +1,6 @@
 # GB-Emu-2k26 — Development Log & Architecture Reference
 
-> **Last Updated:** 2026-02-19  
+> **Last Updated:** 2026-02-21  
 > **Purpose:** Capture all development context, architecture decisions, hard-won bug fixes, and remaining work so future sessions can continue efficiently without re-discovering past findings.
 
 ---
@@ -130,14 +130,14 @@ A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2 for disp
 
 ## Test Results Summary
 
-### Mooneye Test Suite (mts-20240926) — As of 2026-02-19
+### Mooneye Test Suite (mts-20240926) — As of 2026-02-21
 
-**Grand Total: 91/94 DMG-ABC tests passing**
+**Grand Total: 94/94 DMG-ABC tests passing**
 
-#### PPU Tests: **11/12 PASSING** 🟡
+#### PPU Tests: **12/12 PASSING** ✅
 | Test | Status | Notes |
 |------|--------|-------|
-| `hblank_ly_scx_timing-GS` | ❌ FAIL | Was fixed by pre-OAM delay, regressed — needs re-investigation |
+| `hblank_ly_scx_timing-GS` | ✅ PASS | Fixed by SCX M-cycle alignment penalty (C++ modulo bug) |
 | `intr_1_2_timing-GS` | ✅ PASS | Fixed by VBlank OAM pulse |
 | `intr_2_0_timing` | ✅ PASS | Fixed by mode 3 penalty (172 dots) |
 | `intr_2_mode0_timing` | ✅ PASS | Fixed by read-before-tick CPU ordering |
@@ -165,10 +165,9 @@ All 3 interrupt tests pass (including `ie_push`).
 - `instr_timing` — passing
 - `mem_timing` / `mem_timing-2` — passing
 
-#### Boot/Serial Tests: **2/3 DMG-ABC PASSING** 🟡
+#### Boot/Serial Tests: **4/4 DMG-ABC PASSING** ✅
 - ✅ `boot_regs-dmgABC`, ✅ `boot_div-dmgABCmgb`
-- ❌ `boot_hwio-dmgABCmgb` — I/O register state after boot is incorrect
-- ❌ `boot_sclk_align-dmgABCmgb` — Serial clock alignment after boot is incorrect
+- ✅ `boot_hwio-dmgABCmgb`, ✅ `boot_sclk_align-dmgABCmgb`
 
 ---
 
@@ -244,7 +243,7 @@ uint8_t CPU::readByte(uint16_t addr) {
 // Same change applied to writeByte()
 ```
 
-**Impact:** This fixed 3 PPU tests but **regressed** `hblank_ly_scx_timing-GS`. The regression suggests that test depends on a slightly different CPU-PPU phase alignment. This is a known trade-off that needs further investigation (see Known Issues).
+**Impact:** This fixed 3 PPU tests. The initial implementation temporarily regressed `hblank_ly_scx_timing-GS`, which was later resolved by the SCX M-cycle alignment fix (Fix 10).
 
 **Files:** `cpu.cpp` (lines ~153-161)
 
@@ -334,7 +333,7 @@ dmaRestarting_ = false;
 
 **Key insight:** On real DMG hardware, memory access blocking is separate from STAT mode bits. OAM reads are blocked 1 dot before STAT shows mode 2. VRAM reads are blocked 1 dot before mode 3. But OAM *writes* are unblocked 1 dot before mode 3 (while STAT still shows mode 2). These asymmetric read/write blocking windows are modeled by SameBoy's separate `oam_read_blocked`, `oam_write_blocked`, `vram_read_blocked` flags.
 
-**Impact:** Fixed both `lcdon_timing-GS` and `lcdon_write_timing-GS`. Also fixed the `hblank_ly_scx_timing-GS` regression (the 4-dot pre-OAM delay corrected the CPU-PPU phase alignment). PPU score: 8/12 → **11/12**.
+**Impact:** Fixed both `lcdon_timing-GS` and `lcdon_write_timing-GS`. Also corrected CPU-PPU phase alignment for `hblank_ly_scx_timing-GS`. PPU score: 8/12 → **11/12**.
 
 **Files:** `ppu.cpp` (`tickHBlank`, `tickOAMSearch`, `readVRAM`, `readOAM`, `writeOAM`, `writeVRAM`), `ppu.h` (`FIRST_LINE_DOTS`, `firstLineShorter_`)
 
@@ -437,24 +436,25 @@ The test has 4 rounds:
 
 ## Known Issues & Remaining Work
 
-### PPU Failures (1 remaining)
+### PPU — ✅ All Passing
 
-- ❌ `hblank_ly_scx_timing-GS` — HBlank/LY timing with SCX scroll. Was previously fixed by pre-OAM transition delay, has regressed. SameBoy passes this test with DMG-B — **this is a real PPU bug, not a variant issue.**
+- ✅ All 12 PPU tests pass, including `hblank_ly_scx_timing-GS` (fixed by SCX M-cycle alignment penalty — C++ negative modulo bug in `(4 - scxFine) % 4` was producing wrong values for SCX%8 ≥ 5).
 
 ### APU — ✅ Implemented
 
 Full DMG APU with all 4 channels, frame sequencer, register I/O, stereo mixing, and SDL2 audio output. **Hardware-accurate** with DMG edge cases (sweep negate quirk, extra length clocking, wave RAM conflicts, DAC enable logic). **Blargg `dmg_sound` 12/12 passing** — all tests match SameBoy output.
 
-### Boot/Serial Failures (2 remaining)
+### Boot/Serial — ✅ All Passing
 
-- ❌ `boot_hwio-dmgABCmgb` — Some I/O registers have incorrect post-boot state. SameBoy passes this — **real bug, not variant-related.** Likely one or more I/O registers in `0xFF00–0xFF7F` not initialized to the correct DMG post-boot values.
-- ❌ `boot_sclk_align-dmgABCmgb` — Serial clock alignment after boot is wrong. SameBoy passes this — **real bug.** The serial transfer control register (`SC` at `0xFF02`) or internal serial shift clock phase is incorrect after boot. May be related to `boot_hwio` failure (fixing I/O init state could fix both).
+All boot and serial tests now pass: `boot_regs-dmgABC`, `boot_div-dmgABCmgb`, `boot_hwio-dmgABCmgb`, `boot_sclk_align-dmgABCmgb`.
 
 ### Completed Fixes
 
 - ~~**`tima_write_reloading`**~~: ✅ Fixed (Fix 8)
 - ~~**`ie_push`**~~: ✅ Fixed (Fix 9)
 - ~~**`boot_div-dmgABCmgb`**~~: ✅ Now passing
+- ~~**`boot_hwio-dmgABCmgb`**~~: ✅ Now passing
+- ~~**`boot_sclk_align-dmgABCmgb`**~~: ✅ Now passing
 
 ### Not Yet Implemented
 - **Sub-M-cycle bus accuracy**: CPU reads at T3 of M-cycle, not T0 or T4
@@ -641,11 +641,11 @@ Key differences between DMG variants are **only** in the boot ROM and APU wave c
 
 | Test | SameBoy DMG-B | Variant Issue? | Root Cause |
 |------|---------------|----------------|------------|
-| `hblank_ly_scx_timing-GS` | ✅ PASS | **No** | PPU HBlank/LY timing with SCX |
-| `boot_sclk_align-dmgABCmgb` | ✅ PASS | **No** | Serial clock init after boot |
-| `boot_hwio-dmgABCmgb` | ✅ PASS | **No** | I/O register post-boot state |
+| `hblank_ly_scx_timing-GS` | ✅ PASS | **No** | ✅ Fixed — SCX M-cycle alignment penalty |
+| `boot_sclk_align-dmgABCmgb` | ✅ PASS | **No** | ✅ Fixed — Serial clock init |
+| `boot_hwio-dmgABCmgb` | ✅ PASS | **No** | ✅ Fixed — I/O register post-boot state |
 
-**All 3 failures are genuine bugs.** None are caused by DMG variant differences.
+**All 3 previously failing tests are now fixed.** Full 94/94 Mooneye compliance achieved.
 
 ### Mooneye Test Naming Convention
 

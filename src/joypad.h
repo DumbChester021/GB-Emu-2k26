@@ -93,7 +93,7 @@ private:
 
     // Column select bits (bits 5-4 of P1).
     // On power-up, both columns are deselected (bits set = high).
-    uint8_t select_ = 0x30;
+    uint8_t select_ = 0x00;
 
     // Button state — active-low nibbles (0x0F = all released)
     uint8_t dirButtons_    = 0x0F; // Right, Left, Up, Down

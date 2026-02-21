@@ -58,6 +58,7 @@ void PPU::tick() {
         return;
     }
 
+
     // Normal PPU operation — advance one dot
     dotCounter_++;
 
@@ -85,6 +86,19 @@ void PPU::tickOAMSearch() {
         setMode(MODE_XFER);
         mode3StartDot_ = dotCounter_;
         mode3PenaltyDots_ = 5;  // Initial penalty: 12 dots total before first pixel
+
+        // ── SCX M-cycle alignment penalty ────────────────────────────
+        // The FIFO pixel discard adds exactly (SCX%8) extra dots to Mode 3.
+        // But Mode 0 entry must align to 4-dot (M-cycle) boundaries so the
+        // STAT interrupt fires at the correct M-cycle. This adds padding
+        // dots to round the SCX penalty up to the next M-cycle boundary.
+        //   SCX%8 = 0:     0 extra dots (Mode 0 at dot 256)
+        //   SCX%8 = 1-4: +3/+2/+1/+0 dots → total 4 (Mode 0 at dot 260)
+        //   SCX%8 = 5-7: +3/+2/+1 dots   → total 8 (Mode 0 at dot 264)
+        int scxFine = scx_ & 7;
+        if (scxFine > 0) {
+            mode3PenaltyDots_ += (4 - (scxFine % 4)) % 4;
+        }
 
         // ── Sprite mode 3 penalties ─────────────────────────────────
         // On DMG, each sprite extends mode 3. The cost per sprite is:
@@ -236,6 +250,7 @@ void PPU::tickHBlank() {
             if (ifReg_) {
                 *ifReg_ |= 0x01;
             }
+
 
             // DMG quirk: Mode 2 OAM STAT source briefly pulses at VBlank
             // entry. This allows mode 2 interrupt to fire at VBlank start,

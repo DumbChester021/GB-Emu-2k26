@@ -5,6 +5,8 @@
 #include <cmath>
 #include <string>
 #include <sys/stat.h>
+#include <unistd.h>
+#include <climits>
 
 #include "cartridge.h"
 #include "cpu.h"
@@ -21,6 +23,34 @@ constexpr int SCALE     = 4;
 // Window dimensions
 constexpr int WIN_WIDTH  = GB_WIDTH  * SCALE;  // 640
 constexpr int WIN_HEIGHT = GB_HEIGHT * SCALE;  // 576
+
+// ── Resolve executable directory ─────────────────────────────────────
+// Returns the directory containing the executable (with trailing /).
+// Used to locate the bootrom relative to the binary, not the CWD.
+static std::string getExeDir() {
+    char buf[PATH_MAX];
+    ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (len <= 0) return "";
+    buf[len] = '\0';
+    std::string path(buf);
+    size_t slash = path.find_last_of('/');
+    if (slash != std::string::npos)
+        return path.substr(0, slash + 1);
+    return "";
+}
+
+// Try to load bootrom: first relative to executable, then relative to CWD
+static bool tryLoadBootrom(MemoryBus& bus) {
+    // Try exe-relative path (e.g. build/../bootroms/dmg_boot.bin)
+    std::string exeDir = getExeDir();
+    if (!exeDir.empty()) {
+        if (bus.loadBootrom(exeDir + "../bootroms/dmg_boot.bin")) return true;
+        if (bus.loadBootrom(exeDir + "bootroms/dmg_boot.bin")) return true;
+    }
+    // Fallback: CWD-relative
+    if (bus.loadBootrom("bootroms/dmg_boot.bin")) return true;
+    return false;
+}
 
 // ── Mooneye pass/fail check ──────────────────────────────────────────
 // A passing test writes Fibonacci 3/5/8/13/21/34 to B/C/D/E/H/L.
@@ -48,8 +78,8 @@ int runTest(const std::string& romPath) {
     bus.init();
     bus.loadCartridge(&(*cartridge));
 
-    // Try to load bootrom
-    bus.loadBootrom("bootroms/dmg_boot.bin");
+    // Load bootrom (tries exe-relative, then CWD-relative)
+    tryLoadBootrom(bus);
 
     CPU cpu(bus);
 
@@ -69,6 +99,9 @@ int runTest(const std::string& romPath) {
 
         if (cpu.hitMooneyeBreakpoint()) {
             cpu.clearMooneyeBreakpoint();
+            // Skip breakpoints during boot ROM — the DMG boot ROM
+            // contains LD B,B (0x40) at offset 0x5E
+            if (bus.bootromActive()) continue;
             breakpointCount++;
 
             // The test executes LD B, B twice:
@@ -143,8 +176,8 @@ int runBlarggTest(const std::string& romPath, const std::string& dumpPath) {
     bus.init();
     bus.loadCartridge(&(*cartridge));
 
-    // Try to load bootrom
-    bus.loadBootrom("bootroms/dmg_boot.bin");
+    // Load bootrom (tries exe-relative, then CWD-relative)
+    tryLoadBootrom(bus);
 
     CPU cpu(bus);
 
@@ -276,8 +309,8 @@ int runEmulator(const std::string& romPath) {
     bus.init();
     bus.loadCartridge(&(*cartridge));
 
-    // Try to load bootrom
-    bus.loadBootrom("bootroms/dmg_boot.bin");
+    // Load bootrom (tries exe-relative, then CWD-relative)
+    tryLoadBootrom(bus);
 
     CPU cpu(bus);
 

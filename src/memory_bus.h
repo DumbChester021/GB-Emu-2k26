@@ -87,13 +87,12 @@ private:
     // Interrupt enable register: FFFF
     uint8_t ie_ = 0;
 
-    // Serial transfer
+    // ── Serial transfer (DIV-aligned clock) ──────────────────────────
     bool serialReady_ = false;
-
-
-    // ── Serial transfer timer ────────────────────────────────────────
-    int serialTimer_ = 0;         // T-cycles remaining for transfer
-    static constexpr int SERIAL_CYCLES = 512; // 8 bits × 64 cycles each (internal clock)
+    bool serialMasterClock_ = false; // Toggles on each falling edge of serial_mask bit
+    bool prevSerialBit_ = false;     // Previous state of the serial mask bit for edge detection
+    uint8_t serialCount_ = 0;        // Bits shifted so far (0-8)
+    static constexpr uint16_t SERIAL_MASK = 0x0080; // Bit 7 of sysCounter (DMG: 8192 Hz)
 
     // ── OAM DMA ─────────────────────────────────────────────────────
     bool     dmaActive_  = false;

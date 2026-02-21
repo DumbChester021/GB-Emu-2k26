@@ -37,6 +37,7 @@ public:
         statIrqLine_ = false;
         frameReady_ = false;
         firstLineAfterEnable_ = false;
+        mode0StatDelay_ = false;
         firstLineShorter_ = false;
         windowTriggered_ = false;
         windowLineCounter_ = 0;
@@ -110,6 +111,7 @@ private:
     int dotCounter_ = 0;       // T-cycle counter within current scanline (0–455)
     bool lcdWasOff_ = false;   // Tracks LCD just-enabled state
     bool firstLineAfterEnable_ = false; // Line 0 after LCD enable has special timing
+    bool mode0StatDelay_ = false;       // 1-dot delay for Mode 0 STAT IRQ (DMG behavior)
     bool firstLineShorter_ = false;     // First line after LCD enable is 448 dots (not 456)
 
     // ── STAT interrupt line (rising-edge detection) ─────────────────

@@ -3,7 +3,7 @@
 A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2.
 
 <p align="center">
-  <strong>91/94 Mooneye tests passing</strong> · <strong>Full audio</strong> · <strong>Save states</strong> · <strong>~5,800 LOC</strong>
+  <strong>94/94 Mooneye tests passing</strong> · <strong>Full audio</strong> · <strong>Save states</strong> · <strong>~5,800 LOC</strong>
 </p>
 
 ---
@@ -20,7 +20,7 @@ A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2.
 | **OAM DMA** — Bus conflicts, restart, timing | ✅ SameBoy-style per-bus conflicts |
 | **Save States** — Binary serialization with CRC32 | ✅ F5 save, F9 load |
 | **Battery Saves** — Cartridge SRAM persistence | ✅ Auto save/load |
-| **Mooneye Test Suite** — 91/94 DMG-ABC tests | ✅ See [test results](#test-results) |
+| **Mooneye Test Suite** — 94/94 DMG-ABC tests | ✅ See [test results](#test-results) |
 
 ---
 
@@ -136,7 +136,7 @@ T-cycle tick → Channel frequency timers → Frame sequencer (512 Hz)
 
 ## 📊 Test Results
 
-**91/94 Mooneye DMG-ABC tests passing** (run via `bash run_mooneye_all.sh`)
+**94/94 Mooneye DMG-ABC tests passing** (run via `bash run_mooneye_all.sh`)
 
 | Category | Score | Status |
 |----------|-------|--------|
@@ -152,14 +152,14 @@ T-cycle tick → Channel frequency timers → Frame sequencer (512 Hz)
 | OAM DMA | 6/6 | ✅ Perfect |
 | PPU | 12/12 | ✅ Perfect |
 | Boot Regs (DMG-ABC) | 1/1 | ✅ Perfect |
+| Boot DIV (DMG-ABC) | 1/1 | ✅ Perfect |
+| Boot HWIO (DMG-ABC) | 1/1 | ✅ Perfect |
+| Serial | 1/1 | ✅ Perfect |
 | MBC1 | 13/13 | ✅ Perfect |
 | MBC2 | 7/7 | ✅ Perfect |
 | MBC5 | 8/8 | ✅ Perfect |
-| Serial | 0/1 | 🔴 `boot_sclk_align` — link cable edge case |
-| Boot DIV | 0/1 | 🔴 `boot_div-dmgABCmgb` — bootrom cycle counting |
-| Boot HWIO | 0/1 | 🔴 `boot_hwio-dmgABCmgb` — bootrom IO values |
 
-> The 3 remaining failures are bootrom-dependent edge cases with no impact on game compatibility.
+> All 94 DMG-ABC tests pass — perfect Mooneye compliance.
 
 ---
 
