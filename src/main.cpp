@@ -651,6 +651,9 @@ int runEmulator(const std::string& romPath, Settings& settings) {
 
         // --- Update / Emulation tick ---
         // Run one full frame worth of T-cycles (70224 = 154 scanlines × 456 dots)
+        // Frame presentation happens inside the loop at VBlank to prevent
+        // the PPU from overwriting early scanlines with the next frame's
+        // scroll position before the framebuffer is copied to SDL.
         constexpr int TCYCLES_PER_FRAME = 70224;
         for (int t = 0; t < TCYCLES_PER_FRAME; ) {
             uint64_t before = cpu.totalCycles();
@@ -662,65 +665,66 @@ int runEmulator(const std::string& romPath, Settings& settings) {
                 break;
             }
             t += (int)(cpu.totalCycles() - before);
-        }
 
-        // --- Render ---
-        // Only present when PPU has completed a frame (VBlank)
-        if (bus.ppu().frameReady()) {
-            bus.ppu().clearFrameReady();
+            // --- Render ---
+            // Present frame immediately at VBlank — before next-frame
+            // scanlines overwrite the framebuffer (prevents scroll tearing)
+            if (bus.ppu().frameReady()) {
+                bus.ppu().clearFrameReady();
 
-            uint32_t* pixels = nullptr;
-            int pitch = 0;
-            SDL_LockTexture(framebuffer, nullptr, reinterpret_cast<void**>(&pixels), &pitch);
+                uint32_t* pixels = nullptr;
+                int pitch = 0;
+                SDL_LockTexture(framebuffer, nullptr, reinterpret_cast<void**>(&pixels), &pitch);
 
-            const uint32_t* fb = bus.ppu().framebuffer();
-            for (int y = 0; y < GB_HEIGHT; y++) {
-                std::memcpy(
-                    reinterpret_cast<uint8_t*>(pixels) + y * pitch,
-                    fb + y * GB_WIDTH,
-                    GB_WIDTH * sizeof(uint32_t)
-                );
-            }
+                const uint32_t* fb = bus.ppu().framebuffer();
+                for (int y = 0; y < GB_HEIGHT; y++) {
+                    std::memcpy(
+                        reinterpret_cast<uint8_t*>(pixels) + y * pitch,
+                        fb + y * GB_WIDTH,
+                        GB_WIDTH * sizeof(uint32_t)
+                    );
+                }
 
-            SDL_UnlockTexture(framebuffer);
+                SDL_UnlockTexture(framebuffer);
 
-            SDL_RenderClear(renderer);
-            SDL_RenderCopy(renderer, framebuffer, nullptr, nullptr);
+                SDL_RenderClear(renderer);
+                SDL_RenderCopy(renderer, framebuffer, nullptr, nullptr);
 
-            // ── QOL: On-screen display (rendered at logical 160×144) ─
-            if (showFpsOsd) {
-                char fpsBuf[16];
-                std::snprintf(fpsBuf, sizeof(fpsBuf), "FPS:%d", fpsDisplay);
-                drawOsdString(renderer, 2, GB_HEIGHT - 10, fpsBuf, 255, 255, 0);
-            }
-            // Draw notifications (stacked from top)
-            int notifyY = 2;
-            for (auto it = g_notifications.begin(); it != g_notifications.end(); ) {
-                drawOsdString(renderer, 2, notifyY, it->text);
-                notifyY += 10;
-                it->framesLeft--;
-                if (it->framesLeft <= 0) it = g_notifications.erase(it);
-                else ++it;
-            }
+                // ── QOL: On-screen display (rendered at logical 160×144) ─
+                if (showFpsOsd) {
+                    char fpsBuf[16];
+                    std::snprintf(fpsBuf, sizeof(fpsBuf), "FPS:%d", fpsDisplay);
+                    drawOsdString(renderer, 2, GB_HEIGHT - 10, fpsBuf, 255, 255, 0);
+                }
+                // Draw notifications (stacked from top)
+                int notifyY = 2;
+                for (auto it = g_notifications.begin(); it != g_notifications.end(); ) {
+                    drawOsdString(renderer, 2, notifyY, it->text);
+                    notifyY += 10;
+                    it->framesLeft--;
+                    if (it->framesLeft <= 0) it = g_notifications.erase(it);
+                    else ++it;
+                }
 
-            SDL_RenderPresent(renderer);
+                SDL_RenderPresent(renderer);
 
-            // --- Dirty-flag battery save (flush after idle) ---
-            cartridge->tickBatterySave();
+                // --- Dirty-flag battery save (flush after idle) ---
+                cartridge->tickBatterySave();
 
-            // --- FPS counter (every ~1 second) ---
-            fpsFrameCount++;
-            uint64_t now = SDL_GetPerformanceCounter();
-            double elapsed = static_cast<double>(now - fpsLastTime) / perfFreq;
-            if (elapsed >= 1.0) {
-                double fps = fpsFrameCount / elapsed;
-                fpsDisplay = static_cast<int>(fps + 0.5);
-                char titleBuf[128];
-                std::snprintf(titleBuf, sizeof(titleBuf), "%s  [%.2f FPS]",
-                              windowTitle.c_str(), fps);
-                SDL_SetWindowTitle(window, titleBuf);
-                fpsFrameCount = 0;
-                fpsLastTime = now;
+                // --- FPS counter (every ~1 second) ---
+                fpsFrameCount++;
+                uint64_t now = SDL_GetPerformanceCounter();
+                double elapsed = static_cast<double>(now - fpsLastTime) / perfFreq;
+                if (elapsed >= 1.0) {
+                    double fps = fpsFrameCount / elapsed;
+                    fpsDisplay = static_cast<int>(fps + 0.5);
+                    char titleBuf[128];
+                    std::snprintf(titleBuf, sizeof(titleBuf), "%s  [%.2f FPS]",
+                                  windowTitle.c_str(), fps);
+                    SDL_SetWindowTitle(window, titleBuf);
+                    fpsFrameCount = 0;
+                    fpsLastTime = now;
+                }
             }
         }
 

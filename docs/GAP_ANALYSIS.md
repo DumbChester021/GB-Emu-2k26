@@ -128,6 +128,7 @@ Only boot ROM and APU wave behavior differ between DMG revisions. Everything els
 | Unused OAM 0x00 | 0xFEA0–0xFEFF reads return 0x00 (DMG behavior, was 0xFF) | Daiku no Gen-san, Tokyo Disneyland |
 | WX≥167 guard | Window cannot trigger at pixel ≥160 (prevents single-pixel artifact) | Games disabling window mid-frame |
 | STAT write glitch | Writing STAT fires spurious interrupt when IRQ line is low (DMG bug) | Road Rash, Zerd no Densetsu |
+| VBlank frame presentation | Present framebuffer at VBlank, not after full T-cycle batch (prevents scroll tearing) | Metroid 2, all scrolling games |
 
 ---
 

@@ -501,6 +501,7 @@ All boot and serial tests now pass: `boot_regs-dmgABC`, `boot_div-dmgABCmgb`, `b
 - ✅ **LY=153 early reset**: On DMG hardware, LY resets to 0 after ~4 dots on scanline 153. Implemented using separate `vblankLine_` counter to track actual VBlank position while `ly_` (CPU-visible) resets early.
 - ✅ **Unused OAM region**: Reads from 0xFEA0–0xFEFF return 0x00 on DMG (was returning 0xFF). Fixes games relying on open bus behavior in this range (Daiku no Gen-san, Tokyo Disneyland).
 - ✅ **WX≥167 guard**: Window trigger is suppressed when `wxTrigger >= SCREEN_WIDTH` (WX ≥ 167), preventing a single-pixel artifact from the fetcher resetting at pixel 160+.
+- ✅ **VBlank frame presentation**: Moved `frameReady()` check inside the tick loop so the framebuffer is copied to SDL immediately at VBlank, before the PPU overwrites early scanlines with the next frame's scroll position. Fixes subtle horizontal line artifacts during vertical scrolling (visible in Metroid 2 and other scrolling games).
 
 ### Not Yet Implemented
 - **MBC3 RTC**: Real-Time Clock registers stubbed to 0 (time features in Pokémon GSC don't work)
