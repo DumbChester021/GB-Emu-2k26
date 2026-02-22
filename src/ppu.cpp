@@ -679,8 +679,19 @@ void PPU::writeReg(uint16_t addr, uint8_t val) {
         case 0xFF41:
             // Bits 0-2 are read-only (mode + coincidence flag)
             stat_ = (stat_ & 0x07) | (val & 0x78);
-            // Writing to STAT can trigger a STAT interrupt (DMG glitch)
+            // DMG glitch: writing STAT with any source bits (3-6) set
+            // briefly asserts the IRQ line.  If the line was previously
+            // low this creates a rising edge → spurious STAT interrupt.
+            // Games that depend on this: Road Rash, Zerd no Densetsu.
+            // We must NOT reset statIrqLine_ here — that would break
+            // the STAT IRQ blocking test.  Instead, if the line was low
+            // we fire the interrupt directly and then let updateStatIRQ
+            // recalculate the true line state.
             if (lcdc_ & 0x80) {
+                if (!statIrqLine_ && (val & 0x78)) {
+                    // Spurious glitch interrupt
+                    if (ifReg_) *ifReg_ |= 0x02;
+                }
                 updateStatIRQ();
             }
             break;

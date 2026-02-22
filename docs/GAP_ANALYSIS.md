@@ -127,6 +127,7 @@ Only boot ROM and APU wave behavior differ between DMG revisions. Everything els
 | LY=153 early reset | LY resets to 0 after ~4 dots on scanline 153 (DMG quirk) | Games polling LY==0 during VBlank |
 | Unused OAM 0x00 | 0xFEA0–0xFEFF reads return 0x00 (DMG behavior, was 0xFF) | Daiku no Gen-san, Tokyo Disneyland |
 | WX≥167 guard | Window cannot trigger at pixel ≥160 (prevents single-pixel artifact) | Games disabling window mid-frame |
+| STAT write glitch | Writing STAT fires spurious interrupt when IRQ line is low (DMG bug) | Road Rash, Zerd no Densetsu |
 
 ---
 
