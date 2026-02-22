@@ -28,20 +28,20 @@ A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2 for disp
 - Hardware-accurate APU with all 4 audio channels and SDL2 audio output
 - Play commercial Game Boy games correctly (with sound)
 
-### Source Files (~5,800 LOC total)
+### Source Files (~7,800 LOC total)
 | File | LOC | Purpose |
 |------|-----|---------|
 | `apu.cpp` | 697 | APU core: 4 channels, frame sequencer, register I/O, mixing |
-| `ppu.cpp` | 659 | PPU state machine, pixel FIFO, tile fetcher, STAT IRQ |
+| `ppu.cpp` | 765 | PPU state machine, pixel FIFO, tile fetcher, STAT IRQ |
 | `cartridge.cpp` | 536 | ROM loading, header parsing |
 | `cpu_opcodes.cpp` | 498 | Main opcode handlers (256 opcodes) |
-| `mbc.h` | 451 | MBC1/MBC2/MBC3/MBC5 memory bank controllers |
+| `mbc.h` | 472 | MBC1/MBC2/MBC3/MBC5 memory bank controllers |
 | `cpu.cpp` | 407 | CPU core: tick loop, interrupts, bus access |
 | `cpu_tables.cpp` | 388 | Opcode metadata tables |
 | `memory_bus.cpp` | 395 | Bus routing, IO registers, DMA, subsystem integration |
 | `cpu.h` | 327 | CPU class declaration, registers |
 | `main.cpp` | 700 | SDL2 window, audio, render loop, input, QOL features |
-| `ppu.h` | 205 | PPU class declaration, FIFO, sprites, state |
+| `ppu.h` | 243 | PPU class declaration, FIFO, sprites, state |
 | `apu_serialize.cpp` | 130 | APU save state serialization |
 | `timer.cpp` | 138 | DIV/TIMA timer with falling-edge detection |
 | `cartridge.h` | 126 | Cartridge class declaration |
@@ -146,11 +146,32 @@ A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2 for disp
 
 ## Test Results Summary
 
-### Mooneye Test Suite (mts-20240926) — As of 2026-02-21
+### Mooneye Test Suite (mts-20240926) — As of 2026-02-22
 
 **Grand Total: 94/94 DMG-ABC tests passing**
 
-#### PPU Tests: **12/12 PASSING** ✅
+| Category | Pass | Total | Status |
+|----------|------|-------|--------|
+| CPU Instructions | 1 | 1 | ✅ Perfect |
+| Bits | 3 | 3 | ✅ Perfect |
+| Interrupts | 3 | 3 | ✅ Perfect |
+| EI/DI Timing | 4 | 4 | ✅ Perfect |
+| HALT | 4 | 4 | ✅ Perfect |
+| Call/JP/Ret/Pop/Push/RST | 13 | 13 | ✅ Perfect |
+| ADD SP / LD HL,SP+e | 2 | 2 | ✅ Perfect |
+| DIV Timing | 1 | 1 | ✅ Perfect |
+| Timer | 13 | 13 | ✅ Perfect |
+| OAM DMA | 6 | 6 | ✅ Perfect |
+| PPU | 12 | 12 | ✅ Perfect |
+| Serial | 1 | 1 | ✅ Perfect |
+| Boot Regs (DMG-ABC) | 1 | 1 | ✅ Perfect |
+| Boot DIV (DMG-ABC) | 1 | 1 | ✅ Perfect |
+| Boot HWIO (DMG-ABC) | 1 | 1 | ✅ Perfect |
+| MBC1 | 13 | 13 | ✅ Perfect |
+| MBC2 | 7 | 7 | ✅ Perfect |
+| MBC5 | 8 | 8 | ✅ Perfect |
+
+#### PPU Tests Detail: **12/12 PASSING** ✅
 | Test | Status | Notes |
 |------|--------|-------|
 | `hblank_ly_scx_timing-GS` | ✅ PASS | Fixed by SCX M-cycle alignment penalty (C++ modulo bug) |
@@ -166,30 +187,20 @@ A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2 for disp
 | `stat_lyc_onoff` | ✅ PASS | Fixed by STAT IRQ line LCD toggle fix |
 | `vblank_stat_intr-GS` | ✅ PASS | |
 
-#### Timer Tests: **13/13 PASSING** ✅
-All 13 timer tests pass.
-
-#### MBC1 Tests: **13/13 PASSING** ✅
-All MBC1 emulator-only tests pass.
-
-#### Interrupt Tests: **3/3 PASSING** ✅
-All 3 interrupt tests pass (including `ie_push`).
-
 #### Blargg Tests: **ALL DMG SUITES PASSING** ✅
-- `cpu_instrs` 11/11 — all passing
-- `instr_timing` — passing
-- `mem_timing` 3/3 — passing
-- `mem_timing-2` 3/3 — passing
-- `dmg_sound` 12/12 — all tests match SameBoy output
-- `halt_bug` — passing
-- `oam_bug` 8/8 — same results as SameBoy DMG-B*
-- `oam_bug-2` 8/8 — same results as SameBoy DMG-B*
+
+| Suite | Tests | Status | Notes |
+|-------|-------|--------|-------|
+| cpu_instrs | 11/11 | ✅ Pass | All individual instruction tests |
+| instr_timing | 1/1 | ✅ Pass | |
+| mem_timing | 3/3 | ✅ Pass | read, write, modify timing |
+| mem_timing-2 | 3/3 | ✅ Pass | Same tests, alternate ROM format |
+| dmg_sound | 12/12 | ✅ Pass | All APU channel and register tests |
+| halt_bug | 1/1 | ✅ Pass | HALT with pending interrupt, IME=0 |
+| oam_bug | 8/8 | ✅ Pass* | Same results as SameBoy DMG-B |
+| oam_bug-2 | 8/8 | ✅ Pass* | Same results as SameBoy DMG-B |
 
 *oam_bug tests do not print "Passed" but produce identical results to SameBoy. cgb_sound is CGB-only and excluded.
-
-#### Boot/Serial Tests: **4/4 DMG-ABC PASSING** ✅
-- ✅ `boot_regs-dmgABC`, ✅ `boot_div-dmgABCmgb`
-- ✅ `boot_hwio-dmgABCmgb`, ✅ `boot_sclk_align-dmgABCmgb`
 
 ---
 

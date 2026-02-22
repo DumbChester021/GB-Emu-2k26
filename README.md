@@ -3,7 +3,7 @@
 A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2.
 
 <p align="center">
-  <strong>94/94 Mooneye</strong> · <strong>DMG-ACID2 passing</strong> · <strong>Blargg all passing</strong> · <strong>Full audio</strong> · <strong>Save states</strong> · <strong>~5,800 LOC</strong>
+  <strong>94/94 Mooneye</strong> · <strong>DMG-ACID2 passing</strong> · <strong>Blargg all passing</strong> · <strong>Full audio</strong> · <strong>Save states</strong> · <strong>~7,800 LOC</strong>
 </p>
 
 ---
