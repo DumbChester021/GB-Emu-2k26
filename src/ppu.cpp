@@ -160,6 +160,7 @@ void PPU::tickPixelTransfer() {
                 fetcherClock_ = 0;
                 fetcherTileX_ = 0;
                 bgFifo_.clear();
+                discardPixels_ = 0;  // Window is not affected by SCX fine-scroll
             }
         }
     }
