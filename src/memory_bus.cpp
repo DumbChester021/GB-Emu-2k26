@@ -192,7 +192,7 @@ uint8_t MemoryBus::read(uint16_t addr) const {
 
     // ── Unusable (0xFEA0–0xFEFF) ─────────────────────────────────────
     if (addr < 0xFF00) {
-        return 0xFF;
+        return 0x00;  // DMG: unusable OAM region reads as 0x00
     }
 
     // ── IO registers (0xFF00–0xFF7F) ─────────────────────────────────
@@ -403,8 +403,9 @@ void MemoryBus::tick() {
                     if (srcAddr < 0x8000) {
                         if (cart_) val = cart_->read(srcAddr);
                     } else if (srcAddr < 0xA000) {
-                        // DMA reads VRAM directly (bypasses PPU blocking)
-                        val = ppu_.readVRAM(srcAddr);
+                        // DMA reads VRAM directly — bypasses PPU mode blocking.
+                        // The DMA controller accesses the VRAM bus independently.
+                        val = ppu_.directReadVRAM(srcAddr);
                     } else if (srcAddr < 0xC000) {
                         if (cart_) val = cart_->read(srcAddr);
                     } else if (srcAddr < 0xE000) {

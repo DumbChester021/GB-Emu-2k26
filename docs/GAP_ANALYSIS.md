@@ -123,6 +123,10 @@ Only boot ROM and APU wave behavior differ between DMG revisions. Everything els
 | HALT bug | Already implemented — PC double-read with IME=0 | Pokémon Yellow, edge cases |
 | Window discard fix | SCX fine-scroll discard no longer bleeds into Window layer | Zelda: Link's Awakening HUD jitter |
 | Window line counter fix | Counter only increments when window actually renders (not just LY >= WY) | DMG-ACID2 chin, games using WX mid-frame |
+| DMA VRAM bypass | OAM DMA reads VRAM directly, bypassing PPU mode 3 blocking | Games running DMA during mode 3 |
+| LY=153 early reset | LY resets to 0 after ~4 dots on scanline 153 (DMG quirk) | Games polling LY==0 during VBlank |
+| Unused OAM 0x00 | 0xFEA0–0xFEFF reads return 0x00 (DMG behavior, was 0xFF) | Daiku no Gen-san, Tokyo Disneyland |
+| WX≥167 guard | Window cannot trigger at pixel ≥160 (prevents single-pixel artifact) | Games disabling window mid-frame |
 
 ---
 

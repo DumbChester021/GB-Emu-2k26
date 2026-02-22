@@ -279,9 +279,8 @@ public:
             // RAM + RTC enable
             ramRTCEnabled_ = ((val & 0x0F) == 0x0A);
         } else if (addr < 0x4000) {
-            // 7-bit ROM bank
+            // 7-bit ROM bank — MBC3 allows bank 0 (no 0→1 fixup unlike MBC1)
             romBank_ = val & 0x7F;
-            if (romBank_ == 0) romBank_ = 1;
         } else if (addr < 0x6000) {
             // RAM bank / RTC register select
             ramBank_ = val;

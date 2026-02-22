@@ -34,6 +34,7 @@ public:
         mode_ = MODE_HBLANK;
         lcdWasOff_ = true;
         dotCounter_ = 0;
+        vblankLine_ = 0;
         statIrqLine_ = false;
         frameReady_ = false;
         firstLineAfterEnable_ = false;
@@ -53,6 +54,11 @@ public:
     // ── VRAM access (0x8000–0x9FFF) with mode-dependent blocking ────
     uint8_t readVRAM(uint16_t addr) const;
     void    writeVRAM(uint16_t addr, uint8_t val);
+
+    // ── Direct VRAM read — bypasses mode blocking (used by OAM DMA) ──
+    uint8_t directReadVRAM(uint16_t addr) const {
+        return vram_[addr - 0x8000];
+    }
 
     // ── OAM access (0xFE00–0xFE9F) with mode-dependent blocking ────
     uint8_t readOAM(uint16_t addr) const;
@@ -109,6 +115,7 @@ private:
     // ── Internal state ──────────────────────────────────────────────
     uint8_t mode_ = MODE_OAM;  // Current PPU mode
     int dotCounter_ = 0;       // T-cycle counter within current scanline (0–455)
+    int vblankLine_ = 0;       // VBlank line counter (0–9, for LY=153 early reset quirk)
     bool lcdWasOff_ = false;   // Tracks LCD just-enabled state
     bool firstLineAfterEnable_ = false; // Line 0 after LCD enable has special timing
     bool mode0StatDelay_ = false;       // 1-dot delay for Mode 0 STAT IRQ (DMG behavior)

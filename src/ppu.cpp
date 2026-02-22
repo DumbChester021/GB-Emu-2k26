@@ -153,7 +153,7 @@ void PPU::tickPixelTransfer() {
         if (ly_ >= wy_) {
             int wxTrigger = wx_ - 7;
             if (wxTrigger < 0) wxTrigger = 0;
-            if (pixelX_ == wxTrigger) {
+            if (wxTrigger < SCREEN_WIDTH && pixelX_ == wxTrigger) {
                 windowTriggered_ = true;
                 fetcherFetchingWindow_ = true;
                 fetcherState_ = FetcherState::ReadTileID;
@@ -249,6 +249,7 @@ void PPU::tickHBlank() {
         if (ly_ >= VISIBLE_LINES) {
             // Enter VBlank
             setMode(MODE_VBLANK);
+            vblankLine_ = 0;  // Start VBlank line counter
             frameReady_ = true;
 
             // VBlank interrupt (IF bit 0)
@@ -286,15 +287,29 @@ void PPU::tickHBlank() {
 void PPU::tickVBlank() {
     if (dotCounter_ >= DOTS_PER_LINE) {
         dotCounter_ = 0;
-        ly_++;
+        vblankLine_++;
 
-        if (ly_ >= TOTAL_LINES) {
-            // Frame complete — wrap around
+        if (vblankLine_ >= 10) {
+            // Frame complete — 10 VBlank lines (144–153) elapsed
             ly_ = 0;
+            vblankLine_ = 0;
             windowLineCounter_ = 0;
             setMode(MODE_OAM);
+        } else {
+            // Normal VBlank line — increment visible LY
+            ly_ = VISIBLE_LINES + vblankLine_;
         }
 
+        checkLYC();
+        updateStatIRQ();
+        return;
+    }
+
+    // LY=153 early reset: after ~4 dots, LY resets to 0 while still in VBlank.
+    // On real DMG hardware, LY reads as 0 for the remainder of scanline 153.
+    // This is important for games that poll LY==0 during VBlank for frame sync.
+    if (vblankLine_ == 9 && dotCounter_ == 4) {
+        ly_ = 0;
         checkLYC();
         updateStatIRQ();
     }
