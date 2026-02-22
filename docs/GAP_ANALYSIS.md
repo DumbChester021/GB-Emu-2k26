@@ -2,11 +2,13 @@
 
 > **Current Score: 94/94 DMG-ABC tests passing** ✅
 > **Target: All Mooneye DMG tests (94/94) — ACHIEVED**
-> **Last Updated: 2026-02-21**
+> **DMG-ACID2: PASSING** ✅
+> **Blargg: ALL PASSING (dmg_sound 12/12, cpu_instrs, instr_timing, mem_timing)** ✅
+> **Last Updated: 2026-02-22**
 
 ---
 
-## Current Test Results (2026-02-21)
+## Current Test Results (2026-02-22)
 
 | Category | Pass | Total | Status |
 |----------|------|-------|--------|
@@ -109,10 +111,28 @@ Only boot ROM and APU wave behavior differ between DMG revisions. Everything els
 
 | Fix | Description | Games Affected |
 |-----|-------------|----------------|
-| Window line counter | Increments when `LY >= WY` even if WX offscreen | Zelda: Link's Awakening, RPGs with HUDs |
 | WX < 7 clipping | Clips `(7 - WX)` pixels when window starts at left edge | Games using WX=0–6 |
 | MBC3 bank 0 | Removed incorrect 0→1 fixup (MBC3 allows bank 0) | Pokémon GSC, MBC3 titles |
 | HALT bug | Already implemented — PC double-read with IME=0 | Pokémon Yellow, edge cases |
+| Window discard fix | SCX fine-scroll discard no longer bleeds into Window layer | Zelda: Link's Awakening HUD jitter |
+| Window line counter fix | Counter only increments when window actually renders (not just LY >= WY) | DMG-ACID2 chin, games using WX mid-frame |
+
+---
+
+## DMG-ACID2 (2026-02-22)
+
+**Status: PASSING** ✅
+
+![DMG-ACID2 Passing](dmg_acid2_pass.png)
+
+The [DMG-ACID2](https://github.com/mattcurrie/dmg-acid2) test validates correct PPU rendering of background, window, objects, palettes, tile data addressing, and OBJ priority. All visual elements render correctly:
+- "Hello World" text (10-sprite limit, BG exclamation mark shows through)
+- Hair hidden by LCDC bit 0 disable
+- Eyes (BG left, Window right, OBJ-to-BG priority)
+- Nose (sprite flipping)
+- Mouth (8×16 sprites, tile index bit 0 ignored)
+- Chin (window resumes after WX set offscreen)
+- Footer text ($9C00 tile map, $8800 tile data)
 
 ### Not Yet Implemented
 - **MBC3 RTC**: Real-Time Clock registers stubbed (Pokémon GSC time features)

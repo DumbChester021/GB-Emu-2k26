@@ -474,10 +474,12 @@ All boot and serial tests now pass: `boot_regs-dmgABC`, `boot_div-dmgABCmgb`, `b
 
 ### Game Compatibility Fixes (2026-02-22)
 
-- ✅ **Window line counter**: `windowLineCounter_` now increments on any scanline where `LY >= WY` and window is enabled, even if WX is offscreen. Fixes HUD corruption in Zelda: Link's Awakening and many RPGs.
+- ✅ **Window discard fix**: SCX fine-scroll discard no longer bleeds into Window layer. Fixes jittering HUD in Zelda: Link's Awakening during BG scrolling.
+- ✅ **Window line counter fix**: Counter only increments when the window actually renders on a scanline (`windowTriggered_`), not merely when `LY >= WY`. Per Pan Docs and SameBoy source (`display.c:1913`), if WX is set offscreen, the counter does not advance. Previous implementation with `windowWYCondition_` broke DMG-ACID2's chin rendering (WX set offscreen between eye and chin).
 - ✅ **WX < 7 clipping**: When window triggers with `WX < 7`, the first `(7 - WX)` pixels of the window tile are properly clipped. Fixes window positioning for games using WX=0–6.
 - ✅ **MBC3 bank 0**: Removed incorrect 0→1 bank fixup from `MBC3Controller::read()`. MBC3 allows bank 0 in the high bank (0x4000–0x7FFF), unlike MBC1. Fixes potential bank mapping errors in Pokémon Gold/Silver/Crystal and other MBC3 games.
 - ✅ **HALT bug**: Already implemented — `haltBug_` flag causes PC to not increment on next fetch when HALT wakes with `IME=0`.
+- ✅ **DMG-ACID2**: All visual elements render correctly — objects, background, window, palettes, tile addressing, OBJ priority, 8×16 sprites, sprite flipping, and LCDC bit 0 behavior.
 
 ### Not Yet Implemented
 - **MBC3 RTC**: Real-Time Clock registers stubbed to 0 (time features in Pokémon GSC don't work)

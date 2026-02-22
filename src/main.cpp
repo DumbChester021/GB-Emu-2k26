@@ -441,7 +441,7 @@ int runEmulator(const std::string& romPath, Settings& settings) {
     // Build window title from ROM title
     std::string windowTitle = "GB Emu 2k26";
     if (!cartridge->title.empty()) {
-        windowTitle += " — " + cartridge->title;
+        windowTitle += " - " + cartridge->title;
     }
 
     // ── QOL: Restore window state from settings ──────────────────────
@@ -763,6 +763,18 @@ int runEmulator(const std::string& romPath, Settings& settings) {
             int wx, wy, ww, wh;
             SDL_GetWindowPosition(window, &wx, &wy);
             SDL_GetWindowSize(window, &ww, &wh);
+
+            // Compensate for window manager decorations (title bar).
+            // SDL_GetWindowPosition returns the client area origin on
+            // some Linux WMs, but SDL_CreateWindow positions the outer
+            // frame — subtract the top border so Y doesn't drift down.
+            int borderTop = 0, borderLeft = 0, borderBottom = 0, borderRight = 0;
+            if (SDL_GetWindowBordersSize(window, &borderTop, &borderLeft,
+                                         &borderBottom, &borderRight) == 0) {
+                wy -= borderTop;
+                wx -= borderLeft;
+            }
+
             settings.setInt("WindowX", wx);
             settings.setInt("WindowY", wy);
             settings.setInt("WindowWidth", ww);

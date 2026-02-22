@@ -131,7 +131,6 @@ void PPU::tickOAMSearch() {
         fetcherClock_ = 0;
         fetcherTileX_ = 0;
         windowTriggered_ = false;
-        windowWYCondition_ = false;
         spriteFetchPending_ = false;
         currentSpriteIdx_ = 0;
     }
@@ -152,10 +151,6 @@ void PPU::tickPixelTransfer() {
     // Check if window should activate
     if (!windowTriggered_ && (lcdc_ & 0x20)) {
         if (ly_ >= wy_) {
-            // Track that the WY condition was met this line, so
-            // windowLineCounter_ increments even if WX is offscreen.
-            windowWYCondition_ = true;
-
             int wxTrigger = wx_ - 7;
             if (wxTrigger < 0) wxTrigger = 0;
             if (pixelX_ == wxTrigger) {
@@ -241,11 +236,11 @@ void PPU::tickHBlank() {
         firstLineShorter_ = false;
         dotCounter_ = 0;
 
-        // Track window line counter — increments if window was triggered
-        // OR if the WY condition was met (LY >= WY with window enabled),
-        // even if WX was offscreen and no window pixels were drawn.
-        // This is critical for correct window tile row rendering.
-        if (windowTriggered_ || windowWYCondition_) {
+        // Track window line counter — only increments when the window
+        // actually rendered on this scanline (windowTriggered_).
+        // Per Pan Docs / SameBoy: counter does NOT advance when WX is
+        // offscreen, even if LY >= WY.
+        if (windowTriggered_) {
             windowLineCounter_++;
         }
 

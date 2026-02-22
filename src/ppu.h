@@ -40,7 +40,6 @@ public:
         mode0StatDelay_ = false;
         firstLineShorter_ = false;
         windowTriggered_ = false;
-        windowWYCondition_ = false;
         windowLineCounter_ = 0;
     }
 
@@ -203,7 +202,6 @@ private:
     int pixelX_ = 0;              // Current X pixel being pushed (0–159)
     int discardPixels_ = 0;       // SCX % 8 pixels to discard
     bool windowTriggered_ = false; // Window active for this line
-    bool windowWYCondition_ = false; // LY >= WY with window enabled (for line counter)
     int windowLineCounter_ = 0;   // Internal window line counter
 
     // ── Sprite fetch state ──────────────────────────────────────────
