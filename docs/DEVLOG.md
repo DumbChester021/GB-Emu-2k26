@@ -472,7 +472,15 @@ All boot and serial tests now pass: `boot_regs-dmgABC`, `boot_div-dmgABCmgb`, `b
 - ~~**`boot_hwio-dmgABCmgb`**~~: ✅ Now passing
 - ~~**`boot_sclk_align-dmgABCmgb`**~~: ✅ Now passing
 
+### Game Compatibility Fixes (2026-02-22)
+
+- ✅ **Window line counter**: `windowLineCounter_` now increments on any scanline where `LY >= WY` and window is enabled, even if WX is offscreen. Fixes HUD corruption in Zelda: Link's Awakening and many RPGs.
+- ✅ **WX < 7 clipping**: When window triggers with `WX < 7`, the first `(7 - WX)` pixels of the window tile are properly clipped. Fixes window positioning for games using WX=0–6.
+- ✅ **MBC3 bank 0**: Removed incorrect 0→1 bank fixup from `MBC3Controller::read()`. MBC3 allows bank 0 in the high bank (0x4000–0x7FFF), unlike MBC1. Fixes potential bank mapping errors in Pokémon Gold/Silver/Crystal and other MBC3 games.
+- ✅ **HALT bug**: Already implemented — `haltBug_` flag causes PC to not increment on next fetch when HALT wakes with `IME=0`.
+
 ### Not Yet Implemented
+- **MBC3 RTC**: Real-Time Clock registers stubbed to 0 (time features in Pokémon GSC don't work)
 - **Sub-M-cycle bus accuracy**: CPU reads at T3 of M-cycle, not T0 or T4
 - **CGB (Game Boy Color)**: See SameBoy Variant Research below for CGB model roadmap
 

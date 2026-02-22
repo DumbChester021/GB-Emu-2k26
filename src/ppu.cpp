@@ -131,6 +131,7 @@ void PPU::tickOAMSearch() {
         fetcherClock_ = 0;
         fetcherTileX_ = 0;
         windowTriggered_ = false;
+        windowWYCondition_ = false;
         spriteFetchPending_ = false;
         currentSpriteIdx_ = 0;
     }
@@ -151,6 +152,10 @@ void PPU::tickPixelTransfer() {
     // Check if window should activate
     if (!windowTriggered_ && (lcdc_ & 0x20)) {
         if (ly_ >= wy_) {
+            // Track that the WY condition was met this line, so
+            // windowLineCounter_ increments even if WX is offscreen.
+            windowWYCondition_ = true;
+
             int wxTrigger = wx_ - 7;
             if (wxTrigger < 0) wxTrigger = 0;
             if (pixelX_ == wxTrigger) {
@@ -160,7 +165,8 @@ void PPU::tickPixelTransfer() {
                 fetcherClock_ = 0;
                 fetcherTileX_ = 0;
                 bgFifo_.clear();
-                discardPixels_ = 0;  // Window is not affected by SCX fine-scroll
+                // WX < 7: clip first (7 - WX) pixels of the window tile
+                discardPixels_ = (wx_ < 7) ? (7 - wx_) : 0;
             }
         }
     }
@@ -235,8 +241,11 @@ void PPU::tickHBlank() {
         firstLineShorter_ = false;
         dotCounter_ = 0;
 
-        // Track window line counter
-        if (windowTriggered_) {
+        // Track window line counter — increments if window was triggered
+        // OR if the WY condition was met (LY >= WY with window enabled),
+        // even if WX was offscreen and no window pixels were drawn.
+        // This is critical for correct window tile row rendering.
+        if (windowTriggered_ || windowWYCondition_) {
             windowLineCounter_++;
         }
 

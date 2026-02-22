@@ -102,3 +102,18 @@ Only boot ROM and APU wave behavior differ between DMG revisions. Everything els
 
 > [!NOTE]
 > **APU is fully implemented**: Hardware-accurate DMG APU with all 4 channels, frame sequencer, stereo mixing, and SDL2 audio output. **Blargg `dmg_sound` 12/12 passing** — all tests match SameBoy output.
+
+---
+
+## Game Compatibility Fixes (2026-02-22)
+
+| Fix | Description | Games Affected |
+|-----|-------------|----------------|
+| Window line counter | Increments when `LY >= WY` even if WX offscreen | Zelda: Link's Awakening, RPGs with HUDs |
+| WX < 7 clipping | Clips `(7 - WX)` pixels when window starts at left edge | Games using WX=0–6 |
+| MBC3 bank 0 | Removed incorrect 0→1 fixup (MBC3 allows bank 0) | Pokémon GSC, MBC3 titles |
+| HALT bug | Already implemented — PC double-read with IME=0 | Pokémon Yellow, edge cases |
+
+### Not Yet Implemented
+- **MBC3 RTC**: Real-Time Clock registers stubbed (Pokémon GSC time features)
+- **Sprite FIFO fetch pausing**: Pipeline doesn't pause at sprite X (correct total timing, minor rendering edge cases)

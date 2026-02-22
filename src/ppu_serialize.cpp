@@ -74,6 +74,7 @@ void PPU::serialize(SaveState& ss) const {
     ss.write<int32_t>(pixelX_);
     ss.write<int32_t>(discardPixels_);
     ss.writeBool(windowTriggered_);
+    ss.writeBool(windowWYCondition_);
     ss.write<int32_t>(windowLineCounter_);
 
     // Sprite fetch
@@ -156,6 +157,7 @@ void PPU::deserialize(SaveState& ss) {
     pixelX_ = ss.read<int32_t>();
     discardPixels_ = ss.read<int32_t>();
     windowTriggered_ = ss.readBool();
+    windowWYCondition_ = ss.readBool();
     windowLineCounter_ = ss.read<int32_t>();
 
     // Sprite fetch

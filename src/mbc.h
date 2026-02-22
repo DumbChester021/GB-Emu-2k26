@@ -256,8 +256,8 @@ public:
             return romRead(addr);
         }
         if (addr < 0x8000) {
+            // MBC3 allows bank 0 in high bank (no 0→1 fixup unlike MBC1)
             int bank = romBank_ & (romBankCount_ - 1);
-            if (bank == 0) bank = 1;
             return romRead(bank * 0x4000 + (addr - 0x4000));
         }
         if (addr >= 0xA000 && addr < 0xC000) {
