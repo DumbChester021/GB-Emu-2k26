@@ -2,6 +2,7 @@
 
 #include <string>
 #include <map>
+#include <algorithm>
 
 /// Lightweight key=value settings persistence (INI-style, no sections).
 /// Default location: ~/.config/gbemu/settings.ini
@@ -16,11 +17,17 @@ public:
     /// Save settings to disk, creating parent directories as needed.
     bool save(const std::string& path = "") const;
 
-    /// Access a value (returns empty string if key absent).
+    /// String accessors.
     std::string get(const std::string& key) const;
-
-    /// Set a value.
     void set(const std::string& key, const std::string& value);
+
+    /// Typed helpers — int.
+    int getInt(const std::string& key, int defaultValue = 0) const;
+    void setInt(const std::string& key, int value);
+
+    /// Typed helpers — float.
+    float getFloat(const std::string& key, float defaultValue = 0.0f) const;
+    void setFloat(const std::string& key, float value);
 
 private:
     std::map<std::string, std::string> data_;

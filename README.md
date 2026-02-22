@@ -20,6 +20,7 @@ A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2.
 | **OAM DMA** — Bus conflicts, restart, timing | ✅ SameBoy-style per-bus conflicts |
 | **Save States** — Binary serialization with CRC32 | ✅ F5 save, F9 load |
 | **Battery Saves** — Cartridge SRAM persistence | ✅ Auto save/load |
+| **QOL** — Volume, mute, FPS OSD, screenshot, window state | ✅ Persistent settings |
 | **Mooneye Test Suite** — 94/94 DMG-ABC tests | ✅ See [test results](#test-results) |
 
 ---
@@ -83,6 +84,10 @@ make -j$(nproc)
 | **Backspace** | Select |
 | **F5** | Save State |
 | **F9** | Load State |
+| **F3** | Toggle FPS OSD |
+| **F12** | Screenshot |
+| **+** / **-** | Volume Up / Down |
+| **M** | Toggle Mute |
 | **Escape** | Quit |
 
 ---

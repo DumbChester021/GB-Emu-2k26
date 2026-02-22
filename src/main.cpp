@@ -3,7 +3,10 @@
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
+#include <ctime>
 #include <string>
+#include <deque>
+#include <algorithm>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <climits>
@@ -263,37 +266,148 @@ int runBlarggTest(const std::string& romPath, const std::string& dumpPath) {
     return 2;
 }
 
+// ── QOL: Global state shared with audio callback thread ──────────────
+static APU* g_apuPtr = nullptr;
+static float g_volume = 1.0f;
+static bool  g_muted  = false;
+static SDL_Window* g_windowPtr = nullptr;  // for focus check in audio cb
+
+// ── QOL: OSD bitmap font (8×8, 38 glyphs: 0-9, A-Z, :, %, space) ────
+static const uint8_t FONT[39][8] = {
+    {0x3C,0x42,0x42,0x42,0x42,0x42,0x3C,0x00}, // 0
+    {0x10,0x30,0x10,0x10,0x10,0x10,0x38,0x00}, // 1
+    {0x3C,0x42,0x02,0x0C,0x30,0x40,0x7E,0x00}, // 2
+    {0x3C,0x42,0x02,0x1C,0x02,0x42,0x3C,0x00}, // 3
+    {0x0C,0x14,0x24,0x44,0x7E,0x04,0x04,0x00}, // 4
+    {0x7E,0x40,0x7C,0x02,0x02,0x42,0x3C,0x00}, // 5
+    {0x3C,0x40,0x7C,0x42,0x42,0x42,0x3C,0x00}, // 6
+    {0x7E,0x02,0x04,0x08,0x10,0x10,0x10,0x00}, // 7
+    {0x3C,0x42,0x42,0x3C,0x42,0x42,0x3C,0x00}, // 8
+    {0x3C,0x42,0x42,0x3E,0x02,0x02,0x3C,0x00}, // 9
+    {0x3C,0x42,0x42,0x7E,0x42,0x42,0x42,0x00}, // A
+    {0x7C,0x42,0x42,0x7C,0x42,0x42,0x7C,0x00}, // B
+    {0x3C,0x42,0x40,0x40,0x40,0x42,0x3C,0x00}, // C
+    {0x7C,0x42,0x42,0x42,0x42,0x42,0x7C,0x00}, // D
+    {0x7E,0x40,0x40,0x7C,0x40,0x40,0x7E,0x00}, // E
+    {0x7E,0x40,0x40,0x7C,0x40,0x40,0x40,0x00}, // F
+    {0x3C,0x42,0x40,0x4E,0x42,0x42,0x3C,0x00}, // G
+    {0x42,0x42,0x42,0x7E,0x42,0x42,0x42,0x00}, // H
+    {0x38,0x10,0x10,0x10,0x10,0x10,0x38,0x00}, // I
+    {0x0E,0x04,0x04,0x04,0x44,0x44,0x38,0x00}, // J
+    {0x42,0x44,0x48,0x70,0x48,0x44,0x42,0x00}, // K
+    {0x40,0x40,0x40,0x40,0x40,0x40,0x7E,0x00}, // L
+    {0x42,0x66,0x5A,0x42,0x42,0x42,0x42,0x00}, // M
+    {0x42,0x62,0x52,0x4A,0x46,0x42,0x42,0x00}, // N
+    {0x3C,0x42,0x42,0x42,0x42,0x42,0x3C,0x00}, // O
+    {0x7C,0x42,0x42,0x7C,0x40,0x40,0x40,0x00}, // P
+    {0x3C,0x42,0x42,0x42,0x4A,0x44,0x3A,0x00}, // Q
+    {0x7C,0x42,0x42,0x7C,0x48,0x44,0x42,0x00}, // R
+    {0x3C,0x40,0x40,0x3C,0x02,0x02,0x3C,0x00}, // S
+    {0x7C,0x10,0x10,0x10,0x10,0x10,0x10,0x00}, // T
+    {0x42,0x42,0x42,0x42,0x42,0x42,0x3C,0x00}, // U
+    {0x42,0x42,0x42,0x42,0x42,0x24,0x18,0x00}, // V
+    {0x42,0x42,0x42,0x42,0x5A,0x66,0x42,0x00}, // W
+    {0x42,0x24,0x18,0x18,0x24,0x42,0x42,0x00}, // X
+    {0x44,0x44,0x28,0x10,0x10,0x10,0x10,0x00}, // Y
+    {0x7E,0x04,0x08,0x10,0x20,0x40,0x7E,0x00}, // Z
+    {0x00,0x18,0x18,0x00,0x18,0x18,0x00,0x00}, // :
+    {0x62,0x64,0x08,0x10,0x26,0x46,0x00,0x00}, // %
+    {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00}, // space
+};
+
+static int fontIndex(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'A' && c <= 'Z') return 10 + (c - 'A');
+    if (c >= 'a' && c <= 'z') return 10 + (c - 'a');
+    if (c == ':') return 36;
+    if (c == '%') return 37;
+    if (c == ' ') return 38;
+    return -1;
+}
+
+static void drawOsdChar(SDL_Renderer* r, int x, int y, char c, uint8_t cr, uint8_t cg, uint8_t cb) {
+    int idx = fontIndex(c);
+    if (idx < 0) return;
+    // Black outline
+    SDL_SetRenderDrawColor(r, 0, 0, 0, 255);
+    for (int row = 0; row < 8; row++) {
+        uint8_t line = FONT[idx][row];
+        for (int col = 0; col < 8; col++) {
+            if (line & (1 << (7 - col))) {
+                for (int dy = -1; dy <= 1; dy++)
+                    for (int dx = -1; dx <= 1; dx++)
+                        if (dx || dy) {
+                            SDL_Rect rc = {x+col+dx, y+row+dy, 1, 1};
+                            SDL_RenderFillRect(r, &rc);
+                        }
+            }
+        }
+    }
+    // Foreground
+    SDL_SetRenderDrawColor(r, cr, cg, cb, 255);
+    for (int row = 0; row < 8; row++) {
+        uint8_t line = FONT[idx][row];
+        for (int col = 0; col < 8; col++) {
+            if (line & (1 << (7 - col))) {
+                SDL_Rect rc = {x+col, y+row, 1, 1};
+                SDL_RenderFillRect(r, &rc);
+            }
+        }
+    }
+}
+
+static void drawOsdString(SDL_Renderer* r, int x, int y, const std::string& s,
+                          uint8_t cr = 255, uint8_t cg = 255, uint8_t cb = 255) {
+    for (char c : s) { drawOsdChar(r, x, y, c, cr, cg, cb); x += 8; }
+}
+
+// ── OSD notification queue ───────────────────────────────────────────
+struct Notification { std::string text; int framesLeft; };
+static std::deque<Notification> g_notifications;
+
+static void showNotification(const std::string& text) {
+    g_notifications.push_back({text, 120}); // ~2 seconds at 60fps
+    while (g_notifications.size() > 5) g_notifications.pop_front();
+}
+
 // ── SDL Audio callback ───────────────────────────────────────────────
 // Runs on a separate SDL audio thread. Reads from the APU's lock-free
-// ring buffer. Fills silence if the emulator hasn't produced enough.
-static APU* g_apuPtr = nullptr;
-
+// ring buffer. Applies volume/mute. Auto-mutes when window loses focus.
 static void audioCallback(void* /*userdata*/, Uint8* stream, int len) {
     auto* out = reinterpret_cast<float*>(stream);
     int totalFloats = len / static_cast<int>(sizeof(float));
     int totalSamples = totalFloats / 2;  // stereo
 
-    if (g_apuPtr) {
-        // Read directly from ring buffer
-        APU::StereoSample buf[2048];
-        int toRead = totalSamples < 2048 ? totalSamples : 2048;
-        int got = g_apuPtr->readSamples(buf, toRead);
+    // Check if we should mute (explicit mute or window unfocused)
+    bool shouldMute = g_muted;
+    if (!shouldMute && g_windowPtr) {
+        Uint32 flags = SDL_GetWindowFlags(g_windowPtr);
+        if (!(flags & SDL_WINDOW_INPUT_FOCUS)) shouldMute = true;
+    }
 
-        for (int i = 0; i < got; i++) {
-            out[i * 2]     = buf[i].left;
-            out[i * 2 + 1] = buf[i].right;
-        }
-        // Fill remainder with silence
-        for (int i = got * 2; i < totalFloats; i++) {
-            out[i] = 0.0f;
-        }
-    } else {
+    if (shouldMute || !g_apuPtr) {
         std::memset(stream, 0, static_cast<size_t>(len));
+        return;
+    }
+
+    // Read from ring buffer
+    APU::StereoSample buf[2048];
+    int toRead = totalSamples < 2048 ? totalSamples : 2048;
+    int got = g_apuPtr->readSamples(buf, toRead);
+
+    float vol = g_volume;
+    for (int i = 0; i < got; i++) {
+        out[i * 2]     = buf[i].left  * vol;
+        out[i * 2 + 1] = buf[i].right * vol;
+    }
+    // Fill remainder with silence
+    for (int i = got * 2; i < totalFloats; i++) {
+        out[i] = 0.0f;
     }
 }
 
 // ── Normal emulation mode ────────────────────────────────────────────
-int runEmulator(const std::string& romPath) {
+int runEmulator(const std::string& romPath, Settings& settings) {
     auto cartridge = Cartridge::loadFromFile(romPath);
     if (!cartridge) {
         std::fprintf(stderr, "Failed to load ROM. Exiting.\n");
@@ -330,16 +444,26 @@ int runEmulator(const std::string& romPath) {
         windowTitle += " — " + cartridge->title;
     }
 
+    // ── QOL: Restore window state from settings ──────────────────────
+    int winX = settings.getInt("WindowX", SDL_WINDOWPOS_CENTERED);
+    int winY = settings.getInt("WindowY", SDL_WINDOWPOS_CENTERED);
+    int winW = settings.getInt("WindowWidth", WIN_WIDTH);
+    int winH = settings.getInt("WindowHeight", WIN_HEIGHT);
+
     SDL_Window* window = SDL_CreateWindow(
         windowTitle.c_str(),
-        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        WIN_WIDTH, WIN_HEIGHT,
-        SDL_WINDOW_SHOWN
+        winX, winY, winW, winH,
+        SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE
     );
     if (!window) {
         std::fprintf(stderr, "SDL_CreateWindow Error: %s\n", SDL_GetError());
         SDL_Quit();
         return EXIT_FAILURE;
+    }
+    g_windowPtr = window;
+
+    if (settings.getInt("Maximized", 0)) {
+        SDL_MaximizeWindow(window);
     }
 
     SDL_Renderer* renderer = SDL_CreateRenderer(
@@ -352,6 +476,9 @@ int runEmulator(const std::string& romPath) {
         SDL_Quit();
         return EXIT_FAILURE;
     }
+
+    // Maintain GB aspect ratio regardless of window size
+    SDL_RenderSetLogicalSize(renderer, GB_WIDTH, GB_HEIGHT);
 
     // Create a texture at native GB resolution — this is what the emulator
     // will draw into. The renderer will upscale it to the window size.
@@ -403,6 +530,12 @@ int runEmulator(const std::string& romPath) {
     // FPS counter
     uint64_t fpsLastTime = frameStart;
     int fpsFrameCount = 0;
+    int fpsDisplay = 0;
+
+    // ── QOL: Load persisted state ────────────────────────────────────
+    g_volume = settings.getFloat("Volume", 1.0f);
+    g_muted  = settings.getInt("Muted", 0) != 0;
+    bool showFpsOsd = settings.getInt("ShowFPS", 0) != 0;
 
     bool running = true;
     SDL_Event event;
@@ -450,6 +583,50 @@ int runEmulator(const std::string& romPath) {
                             } else {
                                 std::fprintf(stderr, "No save state found: %s\n",
                                              path.c_str());
+                            }
+                            break;
+                        }
+                        // ── QOL key bindings ─────────────────
+                        case SDLK_EQUALS:
+                        case SDLK_PLUS: {
+                            g_volume = std::min(1.0f, g_volume + 0.1f);
+                            int pct = static_cast<int>(g_volume * 100 + 0.5f);
+                            char buf[32]; std::snprintf(buf, sizeof(buf), "VOL:%d%%", pct);
+                            showNotification(buf);
+                            break;
+                        }
+                        case SDLK_MINUS: {
+                            g_volume = std::max(0.0f, g_volume - 0.1f);
+                            int pct = static_cast<int>(g_volume * 100 + 0.5f);
+                            char buf[32]; std::snprintf(buf, sizeof(buf), "VOL:%d%%", pct);
+                            showNotification(buf);
+                            break;
+                        }
+                        case SDLK_m:
+                            g_muted = !g_muted;
+                            showNotification(g_muted ? "MUTED" : "UNMUTED");
+                            break;
+                        case SDLK_F3:
+                            showFpsOsd = !showFpsOsd;
+                            break;
+                        case SDLK_F12: {
+                            // ── Screenshot ────────────────────
+                            const uint32_t* fb = bus.ppu().framebuffer();
+                            mkdir("screenshots", 0755);
+                            std::time_t t = std::time(nullptr);
+                            char fname[64];
+                            std::strftime(fname, sizeof(fname),
+                                          "screenshots/%Y%m%d_%H%M%S.bmp",
+                                          std::localtime(&t));
+                            SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(
+                                0, GB_WIDTH, GB_HEIGHT, 32, SDL_PIXELFORMAT_ARGB8888);
+                            if (surf) {
+                                std::memcpy(surf->pixels, fb,
+                                            GB_WIDTH * GB_HEIGHT * sizeof(uint32_t));
+                                SDL_SaveBMP(surf, fname);
+                                SDL_FreeSurface(surf);
+                                std::printf("Screenshot saved: %s\n", fname);
+                                showNotification("SCREENSHOT SAVED");
                             }
                             break;
                         }
@@ -509,17 +686,35 @@ int runEmulator(const std::string& romPath) {
 
             SDL_RenderClear(renderer);
             SDL_RenderCopy(renderer, framebuffer, nullptr, nullptr);
+
+            // ── QOL: On-screen display (rendered at logical 160×144) ─
+            if (showFpsOsd) {
+                char fpsBuf[16];
+                std::snprintf(fpsBuf, sizeof(fpsBuf), "FPS:%d", fpsDisplay);
+                drawOsdString(renderer, 2, GB_HEIGHT - 10, fpsBuf, 255, 255, 0);
+            }
+            // Draw notifications (stacked from top)
+            int notifyY = 2;
+            for (auto it = g_notifications.begin(); it != g_notifications.end(); ) {
+                drawOsdString(renderer, 2, notifyY, it->text);
+                notifyY += 10;
+                it->framesLeft--;
+                if (it->framesLeft <= 0) it = g_notifications.erase(it);
+                else ++it;
+            }
+
             SDL_RenderPresent(renderer);
 
             // --- Dirty-flag battery save (flush after idle) ---
             cartridge->tickBatterySave();
 
-            // --- FPS display (every ~1 second) ---
+            // --- FPS counter (every ~1 second) ---
             fpsFrameCount++;
             uint64_t now = SDL_GetPerformanceCounter();
             double elapsed = static_cast<double>(now - fpsLastTime) / perfFreq;
             if (elapsed >= 1.0) {
                 double fps = fpsFrameCount / elapsed;
+                fpsDisplay = static_cast<int>(fps + 0.5);
                 char titleBuf[128];
                 std::snprintf(titleBuf, sizeof(titleBuf), "%s  [%.2f FPS]",
                               windowTitle.c_str(), fps);
@@ -559,8 +754,29 @@ int runEmulator(const std::string& romPath) {
         cartridge->writeBatterySave();
     }
 
+    // ── QOL: Save window state + settings on exit ────────────────────
+    {
+        Uint32 flags = SDL_GetWindowFlags(window);
+        bool maximized = flags & SDL_WINDOW_MAXIMIZED;
+        settings.setInt("Maximized", maximized ? 1 : 0);
+        if (!maximized) {
+            int wx, wy, ww, wh;
+            SDL_GetWindowPosition(window, &wx, &wy);
+            SDL_GetWindowSize(window, &ww, &wh);
+            settings.setInt("WindowX", wx);
+            settings.setInt("WindowY", wy);
+            settings.setInt("WindowWidth", ww);
+            settings.setInt("WindowHeight", wh);
+        }
+        settings.setFloat("Volume", g_volume);
+        settings.setInt("Muted", g_muted ? 1 : 0);
+        settings.setInt("ShowFPS", showFpsOsd ? 1 : 0);
+        settings.save();
+    }
+
     // ─── Cleanup ───
     g_apuPtr = nullptr;
+    g_windowPtr = nullptr;
     if (audioDevice != 0) {
         SDL_PauseAudioDevice(audioDevice, 1);
         SDL_CloseAudioDevice(audioDevice);
@@ -642,5 +858,5 @@ int main(int argc, char* argv[]) {
     }
 
     std::printf("Loading ROM: %s\n", romPath.c_str());
-    return runEmulator(romPath);
+    return runEmulator(romPath, settings);
 }

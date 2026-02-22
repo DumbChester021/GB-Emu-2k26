@@ -40,7 +40,7 @@ A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2 for disp
 | `cpu_tables.cpp` | 388 | Opcode metadata tables |
 | `memory_bus.cpp` | 395 | Bus routing, IO registers, DMA, subsystem integration |
 | `cpu.h` | 327 | CPU class declaration, registers |
-| `main.cpp` | 355 | SDL2 window, audio, render loop, input, frame pacing |
+| `main.cpp` | 700 | SDL2 window, audio, render loop, input, QOL features |
 | `ppu.h` | 205 | PPU class declaration, FIFO, sprites, state |
 | `apu_serialize.cpp` | 130 | APU save state serialization |
 | `timer.cpp` | 138 | DIV/TIMA timer with falling-edge detection |
@@ -133,6 +133,14 @@ A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2 for disp
   - Coarse SDL_Delay for bulk wait, spin-wait for sub-millisecond precision
   - Sub-tick error accumulator prevents long-term drift
 - **FPS Display**: Updates window title with current FPS every ~1 second
+- **QOL Features** (ported from gb-emu3):
+  - Volume control: `+`/`-` keys, 0-100% in 10% steps, applied in audio callback
+  - Mute toggle: `M` key; auto-mutes when window loses focus
+  - FPS OSD: `F3` toggle, rendered via bitmap font at native 160×144 resolution
+  - Screenshot: `F12` saves BMP to `screenshots/YYYYMMDD_HHMMSS.bmp`
+  - OSD notifications: auto-dismissing text overlay (~2s) for volume/mute/screenshot
+  - Window state: position, size, maximized state persisted across launches
+  - All QOL state saved/restored via `Settings` class
 
 ---
 

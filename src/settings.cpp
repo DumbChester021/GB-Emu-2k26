@@ -90,3 +90,23 @@ std::string Settings::get(const std::string& key) const {
 void Settings::set(const std::string& key, const std::string& value) {
     data_[key] = value;
 }
+
+int Settings::getInt(const std::string& key, int defaultValue) const {
+    std::string val = get(key);
+    if (val.empty()) return defaultValue;
+    try { return std::stoi(val); } catch (...) { return defaultValue; }
+}
+
+void Settings::setInt(const std::string& key, int value) {
+    set(key, std::to_string(value));
+}
+
+float Settings::getFloat(const std::string& key, float defaultValue) const {
+    std::string val = get(key);
+    if (val.empty()) return defaultValue;
+    try { return std::stof(val); } catch (...) { return defaultValue; }
+}
+
+void Settings::setFloat(const std::string& key, float value) {
+    set(key, std::to_string(value));
+}
