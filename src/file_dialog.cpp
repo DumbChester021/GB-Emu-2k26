@@ -3,17 +3,26 @@
 #include <array>
 #include <cstdio>
 #include <cstring>
+#include <string>
 
-std::string openFileDialog() {
+std::string openFileDialog(const std::string& initialDir) {
     // Use zenity on Linux for a native-feeling file picker
-    const char* cmd =
+    std::string cmd =
         "zenity --file-selection "
         "--title='Select a Game Boy ROM' "
         "--file-filter='Game Boy ROMs (*.gb, *.gbc)|*.gb *.gbc' "
-        "--file-filter='All files|*' "
-        "2>/dev/null";
+        "--file-filter='All files|*' ";
 
-    FILE* pipe = popen(cmd, "r");
+    // Point the dialog at a specific directory if requested.
+    // The trailing '/' tells zenity to open the directory rather than
+    // pre-filling a filename.
+    if (!initialDir.empty()) {
+        cmd += "--filename='" + initialDir + "/' ";
+    }
+
+    cmd += "2>/dev/null";
+
+    FILE* pipe = popen(cmd.c_str(), "r");
     if (!pipe) {
         std::fprintf(stderr, "Warning: Could not open file dialog (zenity not found?).\n");
         return "";

@@ -60,7 +60,7 @@ make -j$(nproc)
 ### Run
 
 ```bash
-# With a file picker dialog
+# With a file picker dialog (remembers last directory)
 ./build/gbemu
 
 # Direct ROM path
@@ -182,8 +182,9 @@ GB-Emu-2k26/
 │   ├── mbc.h                    # Memory bank controllers
 │   ├── joypad.cpp / .h          # Input handling
 │   ├── save_state.h             # Binary serialization framework
+│   ├── settings.cpp / .h        # Persistent emulator settings (~/.config/gbemu/)
 │   ├── main.cpp                 # SDL2 init, render loop, audio, input
-│   └── file_dialog.cpp / .h     # Native file picker
+│   └── file_dialog.cpp / .h     # Native file picker (remembers last directory)
 ├── docs/
 │   ├── DEVLOG.md                # Development log and architecture reference
 │   └── GAP_ANALYSIS.md          # Mooneye test compliance analysis

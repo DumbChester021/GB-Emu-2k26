@@ -1,6 +1,6 @@
 # GB-Emu-2k26 — Development Log & Architecture Reference
 
-> **Last Updated:** 2026-02-21  
+> **Last Updated:** 2026-02-22  
 > **Purpose:** Capture all development context, architecture decisions, hard-won bug fixes, and remaining work so future sessions can continue efficiently without re-discovering past findings.
 
 ---
@@ -49,7 +49,8 @@ A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2 for disp
 | `cpu_cb_opcodes.cpp` | 87 | CB-prefixed opcode handlers |
 | `memory_bus.h` | 84 | MemoryBus class declaration |
 | `timer.h` | 74 | Timer class declaration |
-| `file_dialog.cpp/h` | 49 | Native file dialog for ROM selection |
+| `settings.cpp/h` | 120 | Persistent emulator settings (INI key=value) |
+| `file_dialog.cpp/h` | 58 | Native file dialog with initial directory support |
 
 ---
 
@@ -120,7 +121,14 @@ A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2 for disp
 - **Audio Pipeline**: T-cycle accurate → downsample to 44100 Hz → NR50/NR51 stereo mix → high-pass filter (DC offset removal) → lock-free SPSC ring buffer → SDL audio callback
 - **Master Power Control**: NR52 bit 7 enables/disables APU; powering off zeros all registers (wave RAM preserved on DMG)
 
+### Settings (`settings.cpp`, `settings.h`)
+- Lightweight INI-style key=value persistence at `~/.config/gbemu/settings.ini`
+- Currently stores `last_rom_dir` — the directory of the last ROM opened via file picker
+- Creates config directory automatically on first save
+- Reusable for future emulator config (palette, volume, etc.)
+
 ### Main Loop (`main.cpp`)
+- **File Picker**: Opens in last ROM directory (persisted in settings), falls back to executable directory on first launch
 - **Frame Pacing**: Hardware-accurate ~59.7275 Hz (4194304 / 70224) using SDL performance counters
   - Coarse SDL_Delay for bulk wait, spin-wait for sub-millisecond precision
   - Sub-tick error accumulator prevents long-term drift

@@ -13,6 +13,7 @@
 #include "file_dialog.h"
 #include "memory_bus.h"
 #include "save_state.h"
+#include "settings.h"
 #include "apu.h"
 
 // Game Boy DMG native resolution
@@ -608,12 +609,35 @@ int main(int argc, char* argv[]) {
     }
 
     // ── Normal mode ──────────────────────────────────────────────────
+    Settings settings;
+    settings.load();  // silently ignored if file doesn't exist yet
+
     if (romPath.empty()) {
         std::printf("No ROM path provided. Opening file dialog...\n");
-        romPath = openFileDialog();
+
+        // Determine where the file picker should start:
+        //   1. Last directory we opened a ROM from (persisted in settings)
+        //   2. Fall back to the executable's directory (build folder)
+        std::string initialDir = settings.get("last_rom_dir");
+        if (initialDir.empty()) {
+            initialDir = getExeDir();
+            // Strip trailing slash for cleanliness (zenity handles either way)
+            if (!initialDir.empty() && initialDir.back() == '/') {
+                initialDir.pop_back();
+            }
+        }
+
+        romPath = openFileDialog(initialDir);
         if (romPath.empty()) {
             std::printf("No file selected. Exiting.\n");
             return EXIT_SUCCESS;
+        }
+
+        // Persist the directory of the selected ROM for next time
+        size_t lastSlash = romPath.find_last_of('/');
+        if (lastSlash != std::string::npos) {
+            settings.set("last_rom_dir", romPath.substr(0, lastSlash));
+            settings.save();
         }
     }
 
