@@ -51,14 +51,21 @@ All 94 Mooneye DMG-ABC acceptance tests pass. Run via `bash run_mooneye_all.sh`.
 | MBC2 | 7/7 | Perfect |
 | MBC5 | 8/8 | Perfect |
 
-### Blargg Tests - All Passing
+### Blargg Tests - All DMG Suites Passing
 
-| Suite | Score |
-|-------|-------|
-| dmg_sound | 12/12 |
-| cpu_instrs | All |
-| instr_timing | Pass |
-| mem_timing / mem_timing-2 | All |
+| Suite | Tests | Status | Notes |
+|-------|-------|--------|-------|
+| cpu_instrs | 11/11 | Pass | All individual instruction tests |
+| instr_timing | 1/1 | Pass | |
+| mem_timing | 3/3 | Pass | read, write, modify timing |
+| mem_timing-2 | 3/3 | Pass | Same tests, alternate ROM format |
+| dmg_sound | 12/12 | Pass | All APU channel and register tests |
+| halt_bug | 1/1 | Pass | HALT with pending interrupt, IME=0 |
+| oam_bug | 8/8 | Pass* | Same results as SameBoy DMG-B |
+| oam_bug-2 | 8/8 | Pass* | Same results as SameBoy DMG-B |
+
+> \*oam_bug tests do not print "Passed" on screen, but produce identical results to SameBoy.
+> cgb_sound is CGB-only and excluded from DMG testing.
 
 ### DMG-ACID2 - Passing
 

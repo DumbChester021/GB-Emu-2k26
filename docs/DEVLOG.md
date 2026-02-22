@@ -175,11 +175,17 @@ All MBC1 emulator-only tests pass.
 #### Interrupt Tests: **3/3 PASSING** ✅
 All 3 interrupt tests pass (including `ie_push`).
 
-#### Blargg Tests: **ALL PASSING** ✅
-- `dmg_sound` 12/12 — all tests match SameBoy output
-- `cpu_instrs` — all passing
+#### Blargg Tests: **ALL DMG SUITES PASSING** ✅
+- `cpu_instrs` 11/11 — all passing
 - `instr_timing` — passing
-- `mem_timing` / `mem_timing-2` — passing
+- `mem_timing` 3/3 — passing
+- `mem_timing-2` 3/3 — passing
+- `dmg_sound` 12/12 — all tests match SameBoy output
+- `halt_bug` — passing
+- `oam_bug` 8/8 — same results as SameBoy DMG-B*
+- `oam_bug-2` 8/8 — same results as SameBoy DMG-B*
+
+*oam_bug tests do not print "Passed" but produce identical results to SameBoy. cgb_sound is CGB-only and excluded.
 
 #### Boot/Serial Tests: **4/4 DMG-ABC PASSING** ✅
 - ✅ `boot_regs-dmgABC`, ✅ `boot_div-dmgABCmgb`

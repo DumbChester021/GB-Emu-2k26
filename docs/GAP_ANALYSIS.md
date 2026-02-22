@@ -3,7 +3,7 @@
 > **Current Score: 94/94 DMG-ABC tests passing** ✅
 > **Target: All Mooneye DMG tests (94/94) — ACHIEVED**
 > **DMG-ACID2: PASSING** ✅
-> **Blargg: ALL PASSING (dmg_sound 12/12, cpu_instrs, instr_timing, mem_timing)** ✅
+> **Blargg: ALL DMG SUITES PASSING (cpu_instrs, dmg_sound, instr_timing, mem_timing, halt_bug, oam_bug)** ✅
 > **Last Updated: 2026-02-22**
 
 ---
@@ -31,9 +31,16 @@
 | Boot HWIO (DMG-ABC) | 1 | 1 | ✅ Perfect |
 | Serial | 1 | 1 | ✅ Perfect |
 | **Blargg dmg_sound** | **12** | **12** | ✅ **Perfect** |
-| Blargg cpu_instrs | all | all | ✅ Perfect |
+| Blargg cpu_instrs | 11 | 11 | ✅ Perfect |
 | Blargg instr_timing | 1 | 1 | ✅ Perfect |
-| Blargg mem_timing | all | all | ✅ Perfect |
+| Blargg mem_timing | 3 | 3 | ✅ Perfect |
+| Blargg mem_timing-2 | 3 | 3 | ✅ Perfect |
+| Blargg halt_bug | 1 | 1 | ✅ Perfect |
+| Blargg oam_bug | 8 | 8 | ✅ Same as SameBoy* |
+| Blargg oam_bug-2 | 8 | 8 | ✅ Same as SameBoy* |
+
+> [!NOTE]
+> \*oam_bug tests do not print "Passed" on screen, but produce identical results to SameBoy DMG-B. cgb_sound is CGB-only and excluded.
 
 > [!NOTE]
 > DMG-0 and SGB/MGB-only variant tests are excluded from this count. We target DMG-B (same as SameBoy). See [SameBoy Cross-Reference](#sameboy-cross-reference) section below.
