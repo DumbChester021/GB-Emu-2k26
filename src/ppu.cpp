@@ -85,7 +85,7 @@ void PPU::tickOAMSearch() {
         // (OAM_DOTS=80 + 4 pre-OAM dots)
         setMode(MODE_XFER);
         mode3StartDot_ = dotCounter_;
-        mode3PenaltyDots_ = 5;  // Initial penalty: 12 dots total before first pixel
+        mode3PenaltyDots_ = 5;  // Initial penalty before first pixel
 
         // ── SCX M-cycle alignment penalty ────────────────────────────
         // The FIFO pixel discard adds exactly (SCX%8) extra dots to Mode 3.
@@ -203,7 +203,7 @@ void PPU::tickHBlank() {
             firstLineShorter_ = true;  // First line is 448 dots, not 456
             setMode(MODE_XFER);
             mode3StartDot_ = dotCounter_;
-            mode3PenaltyDots_ = 5;  // Initial penalty: 12 dots total before first pixel
+            mode3PenaltyDots_ = 6;  // Initial penalty: 6 penalty + 6 fetch (PushToFIFO instant) = 12 dots
             pixelX_ = 0;
             discardPixels_ = scx_ & 7;
             bgFifo_.clear();
@@ -667,8 +667,6 @@ void PPU::writeReg(uint16_t addr, uint8_t val) {
                 lcdWasOff_ = true;
                 // Coincidence flag is RETAINED (not cleared)
                 // Freeze STAT IRQ line based on retained coincidence flag.
-                // Mode sources are inactive when PPU is stopped.
-                // Set directly (no edge detection) to avoid spurious interrupts.
                 statIrqLine_ = ((stat_ & 0x40) && (stat_ & 0x04));
             } else if (!wasOn && isOn) {
                 lcdWasOff_ = true;
@@ -679,17 +677,9 @@ void PPU::writeReg(uint16_t addr, uint8_t val) {
         case 0xFF41:
             // Bits 0-2 are read-only (mode + coincidence flag)
             stat_ = (stat_ & 0x07) | (val & 0x78);
-            // DMG glitch: writing STAT with any source bits (3-6) set
-            // briefly asserts the IRQ line.  If the line was previously
-            // low this creates a rising edge → spurious STAT interrupt.
-            // Games that depend on this: Road Rash, Zerd no Densetsu.
-            // We must NOT reset statIrqLine_ here — that would break
-            // the STAT IRQ blocking test.  Instead, if the line was low
-            // we fire the interrupt directly and then let updateStatIRQ
-            // recalculate the true line state.
+            // DMG STAT write glitch: spurious interrupt if line was low
             if (lcdc_ & 0x80) {
                 if (!statIrqLine_ && (val & 0x78)) {
-                    // Spurious glitch interrupt
                     if (ifReg_) *ifReg_ |= 0x02;
                 }
                 updateStatIRQ();
@@ -700,12 +690,10 @@ void PPU::writeReg(uint16_t addr, uint8_t val) {
         case 0xFF44: break; // LY is read-only
         case 0xFF45:
             lyc_ = val;
-            // Only re-check LYC if LCD is on
             if (lcdc_ & 0x80) {
                 checkLYC();
                 updateStatIRQ();
             }
-            // If LCD is off, comparison clock is stopped — no re-check
             break;
         case 0xFF46: dma_ = val; break;
         case 0xFF47: bgp_ = val; break;
