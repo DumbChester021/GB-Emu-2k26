@@ -1,6 +1,6 @@
 # Mealybug Tearoom Tests — DMG Compliance
 
-> **Current Score: 5/24 DMG-blob tests passing** (hardware rewrite in progress)
+> **Current Score: 5/24 DMG-CPU B-targeted comparisons passing** (hardware rewrite in progress)
 > **Last Updated:** 2026-08-11
 
 ---
@@ -38,6 +38,10 @@ Fresh `bash run_mealybug.sh` output on 2026-08-11 is **5/24**. During
 development, compensating Mode-2/startup offsets reached 16/24, but those
 offsets contradicted the measured one-dot Mode-2 interrupt lead and were removed.
 
+Only two explicit `DMG-CPU B` captures are bundled. The runner prefers those
+and falls back to `DMG-blob` for the other 22 ROMs, printing the chosen source
+for every result. CPU CGB C/D captures are never used for the DMG score.
+
 The remaining work is concentrated in:
 
 - PPU consumption ordering for SCY, palettes, LCDC, and WX after their CPU bus edges;
@@ -54,7 +58,7 @@ one T-cycle.
 
 ## Test Categories
 
-### 24 DMG-blob Tests
+### 24 DMG Tests
 
 | Category | Tests | Description |
 |----------|-------|-------------|
@@ -83,6 +87,7 @@ one T-cycle.
 - Expected images use greyscale: `$00`, `$55`, `$AA`, `$FF`
 - Our DMG palette maps: `E0F8D0→FF`, `88C070→AA`, `346856→55`, `081820→00`
 - Run via `bash run_mealybug.sh` (uses ImageMagick for palette remapping + pixel compare)
+- Complete regression gate: `bash run_dmg_b_regression.sh`
 
 ### `line_0_fix` Macro
 
@@ -103,7 +108,7 @@ The fetcher now advances through `GetTileT1/T2`, `GetTileDataLowT1/T2`,
 `GetTileDataHighT1/T2`, and `Push`. BG output and fetching run concurrently;
 OBJ fetches pause that loop dynamically. There is no SCX/sprite penalty lookup
 table. A four-dot post-transition bus interval remains and is being validated
-alongside the five failing Mooneye PPU tests.
+alongside the four failing Mooneye PPU tests.
 
 ### Register Read Points in Fetcher
 

@@ -5,7 +5,7 @@
 
 > [!IMPORTANT]
 > The 2026-08-11 per-dot PPU rewrite intentionally replaced synthetic Mode-3
-> penalty formulas. Current measured status is 89/94 selected Mooneye and 5/24
+> penalty formulas. Current measured status is 90/94 selected Mooneye and 5/24
 > Mealybug. Older 94/94 entries below are historical snapshots, not the current
 > result.
 
@@ -91,6 +91,7 @@ Mode-3 consumption edges and OBJ fetch behavior remain incomplete.
 - **STAT Interrupt Logic** (`updateStatIRQ()`):
   - Rising-edge detection: IRQ only fires on `false→true` transition of combined STAT line
   - Sources OR'd: mode 0 enable (bit 3), mode 1 enable (bit 4), mode 2 enable (bit 5), LYC=LY (bit 6)
+  - DMG Mode-0 source reaches the shared line two dots after the visible XFER→HBlank mode-bit transition
   - VBlank OAM pulse: `vblankOamPulse_` flag creates a one-shot mode 2 source at VBlank entry
 - **LCD Enable/Disable**: LCDC bit 7 controls LCD. Disable resets to mode 0, LY=0, dot=0
 
@@ -158,7 +159,7 @@ Mode-3 consumption edges and OBJ fetch behavior remain incomplete.
 
 ### Mooneye Test Suite (mts-20240926) — Verified 2026-08-11
 
-**Grand Total: 89/94 selected DMG-ABC tests passing**
+**Grand Total: 90/94 DMG-CPU B-compatible tests passing**
 
 | Category | Pass | Total | Status |
 |----------|------|-------|--------|
@@ -172,7 +173,7 @@ Mode-3 consumption edges and OBJ fetch behavior remain incomplete.
 | DIV Timing | 1 | 1 | ✅ Perfect |
 | Timer | 13 | 13 | ✅ Perfect |
 | OAM DMA | 6 | 6 | ✅ Perfect |
-| PPU | 7 | 12 | ⚠️ In progress |
+| PPU | 8 | 12 | ⚠️ In progress |
 | Serial | 1 | 1 | ✅ Perfect |
 | Boot Regs (DMG-ABC) | 1 | 1 | ✅ Perfect |
 | Boot DIV (DMG-ABC) | 1 | 1 | ✅ Perfect |
@@ -181,10 +182,10 @@ Mode-3 consumption edges and OBJ fetch behavior remain incomplete.
 | MBC2 | 7 | 7 | ✅ Perfect |
 | MBC5 | 8 | 8 | ✅ Perfect |
 
-#### PPU Tests Detail: **7/12 PASSING** ⚠️
+#### PPU Tests Detail: **8/12 PASSING** ⚠️
 | Test | Status | Notes |
 |------|--------|-------|
-| `hblank_ly_scx_timing-GS` | ❌ FAIL | Synthetic SCX M-cycle rounding removed; natural per-dot duration under validation |
+| `hblank_ly_scx_timing-GS` | ✅ PASS | FIFO duration plus delayed Mode-0 STAT source; no SCX lookup table |
 | `intr_1_2_timing-GS` | ❌ FAIL | VBlank-to-line-0 Mode-2 edge remains |
 | `intr_2_0_timing` | ✅ PASS | Fixed by mode 3 penalty (172 dots) |
 | `intr_2_mode0_timing` | ✅ PASS | Fixed by read-before-tick CPU ordering |
@@ -206,14 +207,14 @@ Mode-3 consumption edges and OBJ fetch behavior remain incomplete.
 | mem_timing | 3/3 | ✅ Pass | read, write, modify timing |
 | mem_timing-2 | 3/3 | ✅ Pass | Same tests, alternate ROM format |
 | dmg_sound | 12/12 | ✅ Pass | All APU channel and register tests |
-| halt_bug | 1/1 | ✅ Pass | HALT with pending interrupt, IME=0 |
+| halt_bug | — | Executed | Visual-only; Mooneye HALT ROMs are the strict gate |
 | oam_bug | 8/8 | ✅ Pass | Causes, timing window, and exact patterns |
 | oam_bug-2 | 8/8 | ✅ Pass | Duplicate suite also verified |
 
 The CPU/timing suites that use serial output print passing results, although the
 current `--blargg` runner returns timeout for them because it only recognizes the
-external-RAM completion protocol. `halt_bug` renders "Passed". cgb_sound is
-CGB-only and excluded.
+external-RAM completion protocol. `halt_bug` has no machine-readable result
+protocol. cgb_sound is CGB-only and excluded.
 
 #### Mealybug Tearoom: **5/24 PASSING** ⚠️
 
@@ -224,6 +225,23 @@ Fresh exact-image comparison passes `m2_win_en_toggle`,
 ---
 
 ## Critical Fixes — Hard Problems Solved
+
+### Fix 13: Delayed DMG Mode-0 STAT source (2026-08-11)
+
+Kept the FIFO-derived XFER→HBlank boundary as the visible STAT mode transition,
+but separated the Mode-0 interrupt source from those mode bits. On DMG the
+shared STAT line sees Mode 0 after a two-dot PPU path; the serialized countdown
+now triggers the normal rising-edge detector without any ROM or SCX-specific
+offset.
+
+**Impact:** `hblank_ly_scx_timing-GS` passes its SCX 0–8 sweep. Mooneye improves
+from 89/94 to **90/94** (PPU 8/12), while Mealybug remains 5/24, both Blargg OAM
+suites remain 8/8, `dmg_sound` remains 12/12, and DMG-ACID2 remains pixel exact.
+Save-state version 4 stores the countdown.
+
+**Files:** `ppu.cpp/.h`, `ppu_serialize.cpp`, `save_state.h`
+
+---
 
 ### Fix 12: SM83 bus phases and LCD-enable start (2026-08-11)
 
@@ -534,7 +552,7 @@ The test has 4 rounds:
 
 ### PPU — ⚠️ Per-Dot Hardware Rewrite In Progress
 
-- ⚠️ 7/12 selected Mooneye PPU tests pass; overall score is 89/94.
+- ⚠️ 8/12 selected Mooneye PPU tests pass; overall score is 90/94.
 - ⚠️ Mealybug Tearoom is 5/24 exact; real BG/OBJ FIFOs are present, but edge ordering remains incomplete.
 - ✅ Blargg OAM corruption is 8/8 in both copies of the suite.
 

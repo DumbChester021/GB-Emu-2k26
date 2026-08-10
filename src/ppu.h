@@ -39,7 +39,7 @@ public:
         statIrqLine_ = false;
         frameReady_ = false;
         firstLineAfterEnable_ = false;
-        mode0StatDelay_ = false;
+        mode0StatDelayDots_ = 0;
         firstLineShorter_ = false;
         windowTriggered_ = false;
         windowBeingFetched_ = false;
@@ -144,7 +144,7 @@ private:
     bool lcdWasOff_ = false;   // Tracks LCD just-enabled state
     int lcdEnableDelayDots_ = 0; // DMG PPU begins two dots after LCDC enable
     bool firstLineAfterEnable_ = false; // Line 0 after LCD enable has special timing
-    bool mode0StatDelay_ = false;       // 1-dot delay for Mode 0 STAT IRQ (DMG behavior)
+    int mode0StatDelayDots_ = 0;        // Delayed Mode 0 STAT source evaluation
     bool firstLineShorter_ = false;     // First line after LCD enable is 448 dots (not 456)
 
     // ── STAT interrupt line (rising-edge detection) ─────────────────

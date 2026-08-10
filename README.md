@@ -3,7 +3,7 @@
 An **accuracy-focused Game Boy (DMG-CPU B) emulator** written in C++17 with SDL2.
 
 <p align="center">
-  <strong>89/94 selected Mooneye</strong> · <strong>DMG-ACID2 pixel-exact</strong> · <strong>Blargg OAM bug 8/8</strong> · <strong>Mealybug 5/24</strong> · <strong>Full audio</strong> · <strong>Save states</strong>
+  <strong>90/94 DMG-B Mooneye</strong> · <strong>DMG-ACID2 pixel-exact</strong> · <strong>Blargg OAM bug 8/8</strong> · <strong>Mealybug 5/24</strong> · <strong>Full audio</strong> · <strong>Save states</strong>
 </p>
 
 ---
@@ -28,11 +28,14 @@ An **accuracy-focused Game Boy (DMG-CPU B) emulator** written in C++17 with SDL2
 
 Results below were rebuilt and measured from the current code on **2026-08-11**.
 
-### Mooneye Test Suite - 89/94 DMG-ABC
+### Mooneye Test Suite - 90/94 DMG-CPU B
 
-The hardware-pipeline rewrite currently passes 89 of the selected 94 tests. All
-non-PPU categories pass; the PPU category is 7/12. Run via
-`bash run_mooneye_all.sh`.
+The hardware-pipeline rewrite currently passes 90 of the 94 tests applicable to
+DMG-CPU B: 66 hardware-verifiable acceptance ROMs and 28 model-neutral MBC
+ROMs. All non-PPU categories pass; the PPU category is 8/12. Run the complete
+model-filtered gate with `bash run_dmg_b_regression.sh`.
+The universal manual `sprite_priority` ROM is also checked pixel-for-pixel but
+is kept outside the 94-ROM protocol score.
 
 | Category | Score | Status |
 |----------|-------|--------|
@@ -46,7 +49,7 @@ non-PPU categories pass; the PPU category is 7/12. Run via
 | DIV Timing | 1/1 | Perfect |
 | Timer | 13/13 | Perfect |
 | OAM DMA | 6/6 | Perfect |
-| PPU | 7/12 | In progress |
+| PPU | 8/12 | In progress |
 | Boot Regs (DMG-ABC) | 1/1 | Perfect |
 | Boot DIV (DMG-ABC) | 1/1 | Perfect |
 | Boot HWIO (DMG-ABC) | 1/1 | Perfect |
@@ -64,22 +67,24 @@ non-PPU categories pass; the PPU category is 7/12. Run via
 | mem_timing | 3/3 | Pass | read, write, modify timing |
 | mem_timing-2 | 3/3 | Pass | Same tests, alternate ROM format |
 | dmg_sound | 12/12 | Pass | All APU channel and register tests |
-| halt_bug | 1/1 | Pass | HALT with pending interrupt, IME=0 |
+| halt_bug | — | Executed | Visual-only; four Mooneye HALT ROMs are the strict gate |
 | oam_bug | 8/8 | Pass | DMG-B corruption causes, timing, and patterns |
 | oam_bug-2 | 8/8 | Pass | Duplicate suite also verified |
 
 > `cpu_instrs`, `instr_timing`, and the original `mem_timing` report success over
 > serial, but the current `--blargg` runner returns timeout because it only treats
-> the external-RAM result protocol as completion. `halt_bug` renders "Passed" on
-> its LCD output. `cgb_sound` is CGB-only and excluded from DMG testing.
+> the external-RAM result protocol as completion. `halt_bug` has no
+> machine-readable result protocol. `cgb_sound` is CGB-only and excluded from
+> DMG testing.
 
 ### Mealybug Tearoom - 5/24
 
 Exact image comparison currently passes `m2_win_en_toggle`,
 `m3_scx_low_3_bits`, `m3_wx_4_change`, `m3_wx_4_change_sprites`, and
 `m3_wx_5_change`. The remaining 19 tests expose PPU consumption-edge and
-window/OBJ fetch cases still under active development. Run via
-`bash run_mealybug.sh`.
+window/OBJ fetch cases still under active development. The runner prefers the
+two available DMG-CPU B captures and uses DMG-blob references for the other 22;
+it never compares against CGB output. Run via `bash run_mealybug.sh`.
 
 ### DMG-ACID2 - Passing
 
@@ -96,20 +101,21 @@ The [DMG-ACID2](https://github.com/mattcurrie/dmg-acid2) PPU rendering test pass
 - **C++17** compiler (GCC 7+, Clang 5+)
 - **CMake** 3.10+
 - **SDL2** development libraries
+- **ImageMagick** (`convert` and `compare`) for the full regression gate
 
 #### Ubuntu / Debian
 ```bash
-sudo apt install build-essential cmake libsdl2-dev
+sudo apt install build-essential cmake libsdl2-dev imagemagick
 ```
 
 #### Fedora
 ```bash
-sudo dnf install gcc-c++ cmake SDL2-devel
+sudo dnf install gcc-c++ cmake SDL2-devel ImageMagick
 ```
 
 #### Arch Linux
 ```bash
-sudo pacman -S base-devel cmake sdl2
+sudo pacman -S base-devel cmake sdl2 imagemagick
 ```
 
 ### Build
@@ -232,11 +238,13 @@ GB-Emu-2k26/
 |-- docs/
 |   |-- DEVLOG.md                # Development log and architecture reference
 |   |-- GAP_ANALYSIS.md          # Test compliance and game compatibility
+|   |-- DMG_B_TEST_MATRIX.md     # Exact DMG-B test scope and exclusions
 |   |-- sameboy_dmg_cross_reference.md  # SameBoy variant analysis
 |   `-- dmg_acid2_pass.png       # DMG-ACID2 test result screenshot
 |-- bootroms/                    # DMG boot ROM
 |-- test_roms/                   # Mooneye and Blargg test suites
 |-- CMakeLists.txt               # Build configuration
+|-- run_dmg_b_regression.sh      # Complete model-filtered regression gate
 |-- run_mooneye_all.sh           # Full Mooneye test runner
 `-- build_and_run.sh             # Quick build + run script
 ```
@@ -247,8 +255,9 @@ GB-Emu-2k26/
 
 | Document | Description |
 |----------|-------------|
-| [Development Log](docs/DEVLOG.md) | Architecture reference, 10 critical fix write-ups with root cause analysis, debugging playbook, build instructions |
+| [Development Log](docs/DEVLOG.md) | Architecture reference, critical fix write-ups, debugging playbook, build instructions |
 | [Gap Analysis](docs/GAP_ANALYSIS.md) | Mooneye/Blargg/DMG-ACID2 test compliance, game compatibility fixes, SameBoy cross-reference |
+| [DMG-CPU B Test Matrix](docs/DMG_B_TEST_MATRIX.md) | Exact applicable test set, reference-image policy, and CGB/SGB exclusions |
 | [SameBoy Cross-Reference](docs/sameboy_dmg_cross_reference.md) | DMG revision comparison, model analysis, test naming conventions |
 
 ---
@@ -257,7 +266,10 @@ GB-Emu-2k26/
 
 ### Run Tests
 ```bash
-# Full selected Mooneye suite (currently 89/94, builds automatically)
+# Complete DMG-CPU B regression gate (builds automatically)
+bash run_dmg_b_regression.sh
+
+# Mooneye-only suite (currently 90/94)
 bash run_mooneye_all.sh
 
 # Individual Mooneye test

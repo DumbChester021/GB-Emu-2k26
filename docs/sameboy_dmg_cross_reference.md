@@ -4,7 +4,7 @@
 
 **SameBoy targets `DMG-CPU-B` exclusively** — it does not emulate DMG-0,
 DMG-A, or DMG-C differently. This project should therefore describe its concrete
-target as DMG-CPU B. The current per-dot rewrite passes **89/94 selected
+target as DMG-CPU B. The current per-dot rewrite passes **90/94 selected
 Mooneye tests** and **5/24 Mealybug** exact images. Both bundled Blargg OAM
 suites still pass 8/8. SameBoy is the oracle for closing the remaining PPU
 edge-ordering gaps; parity is not currently claimed.
@@ -52,11 +52,12 @@ typedef enum {
 
 ## Selected Mooneye Cross-Reference — Rewrite Snapshot
 
-### `hblank_ly_scx_timing-GS` (PPU) — ❌ CURRENTLY FAILING
+### `hblank_ly_scx_timing-GS` (PPU) — ✅ PASSING
 
-The older renderer passed by rounding SCX penalties to M-cycle boundaries. That
-formula was removed when the real FIFO pipeline landed; the natural fine-scroll
-duration is now being aligned to the measured HBlank edge.
+The FIFO determines the visible XFER→HBlank transition without an SCX lookup
+table. The DMG Mode-0 STAT source is evaluated through its separate two-dot
+path, so the interrupt edge follows the visible STAT mode bits. SCX values 0–8
+now pass the ROM's timing sweep.
 
 ### ✓ `boot_sclk_align-dmgABCmgb` (Serial) — ✅ PASSING
 
@@ -66,7 +67,7 @@ duration is now being aligned to the measured HBlank edge.
 
 | Test | Category | SameBoy | Our Status | Action |
 |------|----------|---------|------------|--------|
-| `hblank_ly_scx_timing-GS` | PPU | ✅ Pass | ❌ Fail | Reconcile natural FIFO duration |
+| `hblank_ly_scx_timing-GS` | PPU | ✅ Pass | ✅ Pass | Two-dot Mode-0 STAT source path |
 | `boot_sclk_align-dmgABCmgb` | Serial | ✅ Pass | ✅ Pass | — |
 | `boot_hwio-dmgABCmgb` | Boot | ✅ Pass | ✅ Pass | — |
 
@@ -85,6 +86,6 @@ For future CGB work:
 | `-S` | SGB+SGB2 | Super Game Boy family |
 
 > [!TIP]
-> **Current selected Mooneye score: 89/94.** Both bundled Blargg OAM corruption
+> **Current selected Mooneye score: 90/94.** Both bundled Blargg OAM corruption
 > suites pass 8/8, while Mealybug is 5/24 exact. See `GAP_ANALYSIS.md` for the
 > live failure list.

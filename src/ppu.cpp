@@ -73,6 +73,10 @@ void PPU::tick() {
     // Normal PPU operation — advance one dot
     dotCounter_++;
 
+    if (mode0StatDelayDots_ > 0 && --mode0StatDelayDots_ == 0) {
+        updateStatIRQ();
+    }
+
     switch (mode_) {
         case MODE_OAM:    tickOAMSearch();     break;
         case MODE_XFER:   tickPixelTransfer(); break;
@@ -640,8 +644,18 @@ void PPU::renderPixelIfPossible() {
 // ══════════════════════════════════════════════════════════════════════
 
 void PPU::setMode(uint8_t newMode) {
+    uint8_t oldMode = mode_;
     mode_ = newMode;
     stat_ = (stat_ & 0xFC) | newMode;
+
+    // The visible STAT mode bits and the interrupt source are separate signals
+    // on DMG. Mode 0 reaches the shared IRQ line through a two-dot path after
+    // XFER ends; all other enabled sources must still be evaluated meanwhile.
+    if (oldMode == MODE_XFER && newMode == MODE_HBLANK) {
+        mode0StatDelayDots_ = 2;
+    } else if (newMode != MODE_HBLANK) {
+        mode0StatDelayDots_ = 0;
+    }
     updateStatIRQ();
 }
 
@@ -674,7 +688,9 @@ void PPU::updateStatIRQ() {
     bool line = false;
 
     // Mode 0 (HBlank) interrupt source
-    if ((stat_ & 0x08) && mode_ == MODE_HBLANK) line = true;
+    if ((stat_ & 0x08) && mode_ == MODE_HBLANK && mode0StatDelayDots_ == 0) {
+        line = true;
+    }
 
     // Mode 1 (VBlank) interrupt source
     if ((stat_ & 0x10) && mode_ == MODE_VBLANK) line = true;

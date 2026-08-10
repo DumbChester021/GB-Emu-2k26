@@ -4,7 +4,8 @@
 #
 # Runs each test ROM, dumps the LCD as PPM at the LD B,B breakpoint,
 # converts to greyscale PNG (mapping our DMG palette to 00/55/AA/FF),
-# and compares pixel-by-pixel against the expected DMG-blob references.
+# and compares pixel-by-pixel against DMG-CPU B captures where available, with
+# DMG-blob references used only for tests that have no CPU-B capture.
 # ═══════════════════════════════════════════════════════════════════════
 
 set -e
@@ -12,7 +13,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 EMU="$SCRIPT_DIR/build/gbemu"
 ROMS_DIR="$SCRIPT_DIR/test_roms/mealybug-tearoom-tests/build"
-EXPECTED_DIR="$SCRIPT_DIR/test_roms/mealybug-tearoom-tests/expected/DMG-blob"
+EXPECTED_CPU_B_DIR="$SCRIPT_DIR/test_roms/mealybug-tearoom-tests/expected/DMG-CPU B"
+EXPECTED_BLOB_DIR="$SCRIPT_DIR/test_roms/mealybug-tearoom-tests/expected/DMG-blob"
 OUTPUT_DIR="$SCRIPT_DIR/test_roms/mealybug-tearoom-tests/output"
 
 # Ensure emulator is built
@@ -31,18 +33,25 @@ mkdir -p "$OUTPUT_DIR"
 pass=0
 fail=0
 total=0
+errors=0
 failed_tests=""
 
 echo "═══════════════════════════════════════════════════"
-echo "  Mealybug Tearoom Tests — DMG-blob"
+echo "  Mealybug Tearoom Tests — DMG-CPU B target"
+echo "  CPU-B capture preferred; DMG-blob fallback"
 echo "═══════════════════════════════════════════════════"
 echo ""
 
 for rom in "$ROMS_DIR"/*.gb; do
     name=$(basename "$rom" .gb)
-    expected="$EXPECTED_DIR/${name}.png"
+    expected="$EXPECTED_CPU_B_DIR/${name}.png"
+    reference="DMG-CPU B"
+    if [ ! -f "$expected" ]; then
+        expected="$EXPECTED_BLOB_DIR/${name}.png"
+        reference="DMG-blob"
+    fi
 
-    # Skip tests that don't have DMG-blob reference screenshots
+    # Skip tests that have no applicable DMG reference screenshot.
     if [ ! -f "$expected" ]; then
         continue
     fi
@@ -53,12 +62,16 @@ for rom in "$ROMS_DIR"/*.gb; do
     png_out="$OUTPUT_DIR/${name}.png"
     grey_out="$OUTPUT_DIR/${name}_grey.png"
 
+    # Never let a stale framebuffer turn a crashed/timed-out run into a pass.
+    rm -f "$ppm_out" "$png_out" "$grey_out"
+
     # Run ROM with Blargg mode (dumps LCD at completion) with timeout
-    timeout 10 "$EMU" --blargg --dump-lcd "$ppm_out" "$rom" > /dev/null 2>&1 || true
+    timeout 30 "$EMU" --blargg --dump-lcd "$ppm_out" "$rom" > /dev/null 2>&1 || true
 
     if [ ! -f "$ppm_out" ]; then
         echo "  ✗ $name  (no LCD output)"
         fail=$((fail + 1))
+        errors=$((errors + 1))
         failed_tests="$failed_tests  $name\n"
         continue
     fi
@@ -78,15 +91,25 @@ for rom in "$ROMS_DIR"/*.gb; do
     # Compare pixel-by-pixel
     diff_pixels=$(compare -metric AE "$grey_out" "$expected" NULL: 2>&1 || true)
 
-    if [ "$diff_pixels" = "0" ]; then
-        echo "  ✓ $name"
+    if [[ ! "$diff_pixels" =~ ^[0-9]+$ ]]; then
+        echo "  ✗ $name  (comparison error: $diff_pixels)  [$reference]"
+        fail=$((fail + 1))
+        errors=$((errors + 1))
+        failed_tests="$failed_tests  $name (comparison error)\n"
+    elif [ "$diff_pixels" = "0" ]; then
+        echo "  ✓ $name  [$reference]"
         pass=$((pass + 1))
     else
-        echo "  ✗ $name  ($diff_pixels pixels differ)"
+        echo "  ✗ $name  ($diff_pixels pixels differ)  [$reference]"
         fail=$((fail + 1))
         failed_tests="$failed_tests  $name ($diff_pixels px)\n"
     fi
 done
+
+if [ "$total" -ne 24 ]; then
+    echo "  ✗ runner manifest error: expected 24 tests, found $total"
+    errors=$((errors + 1))
+fi
 
 echo ""
 echo "═══════════════════════════════════════════════════"
@@ -97,4 +120,10 @@ if [ $fail -gt 0 ]; then
     echo ""
     echo "Failed tests:"
     echo -e "$failed_tests"
+fi
+
+# Pixel mismatches are accuracy results, but a missing capture means this
+# runner did not actually test the ROM and must fail the regression harness.
+if [ "$errors" -gt 0 ]; then
+    exit 2
 fi
