@@ -4,9 +4,10 @@
 
 **SameBoy targets `DMG-CPU-B` exclusively** — it does not emulate DMG-0,
 DMG-A, or DMG-C differently. This project should therefore describe its concrete
-target as DMG-CPU B. **All 94 selected Mooneye tests pass, matching SameBoy on
-that subset. Both bundled Blargg OAM suites also pass 8/8; Mealybug mode-3
-tests remain the clearest broader accuracy gap.**
+target as DMG-CPU B. The current per-dot rewrite passes **89/94 selected
+Mooneye tests** and **4/24 Mealybug** exact images. Both bundled Blargg OAM
+suites still pass 8/8. SameBoy is the oracle for closing the remaining PPU
+edge-ordering gaps; parity is not currently claimed.
 
 ---
 
@@ -49,11 +50,13 @@ typedef enum {
 > [!NOTE]
 > The key differences between DMG variants are only in the **boot ROM** and **APU wave channel behavior**. CPU timing, PPU timing, timer behavior, and memory bus behavior are the same across all DMG revisions.
 
-## Selected Mooneye Cross-Reference — All Passing ✅
+## Selected Mooneye Cross-Reference — Rewrite Snapshot
 
-### ✓ `hblank_ly_scx_timing-GS` (PPU) — ✅ NOW PASSING
+### `hblank_ly_scx_timing-GS` (PPU) — ❌ CURRENTLY FAILING
 
-Fixed by correcting the SCX M-cycle alignment penalty formula. The original `(4 - scxFine) % 4` produced negative values for SCX%8 ≥ 5 due to C++ signed modulo behavior. Fixed to `(4 - (scxFine % 4)) % 4`.
+The older renderer passed by rounding SCX penalties to M-cycle boundaries. That
+formula was removed when the real FIFO pipeline landed; the natural fine-scroll
+duration is now being aligned to the measured HBlank edge.
 
 ### ✓ `boot_sclk_align-dmgABCmgb` (Serial) — ✅ PASSING
 
@@ -63,7 +66,7 @@ Fixed by correcting the SCX M-cycle alignment penalty formula. The original `(4 
 
 | Test | Category | SameBoy | Our Status | Action |
 |------|----------|---------|------------|--------|
-| `hblank_ly_scx_timing-GS` | PPU | ✅ Pass | ✅ Pass | ✅ Fixed |
+| `hblank_ly_scx_timing-GS` | PPU | ✅ Pass | ❌ Fail | Reconcile natural FIFO duration |
 | `boot_sclk_align-dmgABCmgb` | Serial | ✅ Pass | ✅ Pass | — |
 | `boot_hwio-dmgABCmgb` | Boot | ✅ Pass | ✅ Pass | — |
 
@@ -82,7 +85,6 @@ For future CGB work:
 | `-S` | SGB+SGB2 | Super Game Boy family |
 
 > [!TIP]
-> **Selected Mooneye set: 94/94 DMG-ABC tests pass**, matching SameBoy DMG-B on
-> this set. Both bundled Blargg OAM corruption suites also pass 8/8. This is
-> still not a claim of full emulator parity: Mealybug remains 1/24 as documented
-> in `GAP_ANALYSIS.md`.
+> **Current selected Mooneye score: 89/94.** Both bundled Blargg OAM corruption
+> suites pass 8/8, while Mealybug is 4/24 exact. See `GAP_ANALYSIS.md` for the
+> live failure list.

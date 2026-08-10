@@ -1,7 +1,13 @@
 # GB-Emu-2k26 — Development Log & Architecture Reference
 
-> **Last Updated:** 2026-08-10
+> **Last Updated:** 2026-08-11
 > **Purpose:** Capture all development context, architecture decisions, hard-won bug fixes, and remaining work so future sessions can continue efficiently without re-discovering past findings.
+
+> [!IMPORTANT]
+> The 2026-08-11 per-dot PPU rewrite intentionally replaced synthetic Mode-3
+> penalty formulas. Current measured status is 89/94 selected Mooneye and 4/24
+> Mealybug. Older 94/94 entries below are historical snapshots, not the current
+> result.
 
 ---
 
@@ -76,11 +82,12 @@ behavior are not yet hardware accurate.
   - **Mode 0 (HBlank)**: fills remainder to 456 dots per line
   - **Mode 1 (VBlank)**: 10 lines (LY 144-153), 4560 dots total
 - **FIFO Pixel Pipeline**:
-  - Tile fetcher with 4 states: `ReadTileID` → `ReadTileDataLow` → `ReadTileDataHigh` → `PushToFIFO`
-  - Each state takes 2 T-cycles (fetcher clock counts 0→1, resets)
-  - 5-dot initial penalty (`mode3PenaltyDots_`) at mode 3 start to match DMG 172-dot mode 3 duration
-  - Background and window tiles with SCX fine-scroll discard
-  - Sprite mixing via `mixSpritePixel()`
+  - Separate eight-pixel BG and OBJ FIFOs
+  - Seven one-dot phases: tile T1/T2, low-data T1/T2, high-data T1/T2, push
+  - Signed internal X starts at -16 with an eight-pixel junk FIFO
+  - Progressive Mode-2 OAM scan and dynamic six-dot object fetches
+  - OBJ overlay and DMG BG/OBJ priority are resolved at FIFO output
+  - Window activation, internal Y, reactivation pixels, and WX write state are explicit
 - **STAT Interrupt Logic** (`updateStatIRQ()`):
   - Rising-edge detection: IRQ only fires on `false→true` transition of combined STAT line
   - Sources OR'd: mode 0 enable (bit 3), mode 1 enable (bit 4), mode 2 enable (bit 5), LYC=LY (bit 6)
@@ -149,9 +156,9 @@ behavior are not yet hardware accurate.
 
 ## Test Results Summary
 
-### Mooneye Test Suite (mts-20240926) — Verified 2026-08-10
+### Mooneye Test Suite (mts-20240926) — Verified 2026-08-11
 
-**Grand Total: 94/94 DMG-ABC tests passing**
+**Grand Total: 89/94 selected DMG-ABC tests passing**
 
 | Category | Pass | Total | Status |
 |----------|------|-------|--------|
@@ -165,7 +172,7 @@ behavior are not yet hardware accurate.
 | DIV Timing | 1 | 1 | ✅ Perfect |
 | Timer | 13 | 13 | ✅ Perfect |
 | OAM DMA | 6 | 6 | ✅ Perfect |
-| PPU | 12 | 12 | ✅ Perfect |
+| PPU | 7 | 12 | ⚠️ In progress |
 | Serial | 1 | 1 | ✅ Perfect |
 | Boot Regs (DMG-ABC) | 1 | 1 | ✅ Perfect |
 | Boot DIV (DMG-ABC) | 1 | 1 | ✅ Perfect |
@@ -174,18 +181,18 @@ behavior are not yet hardware accurate.
 | MBC2 | 7 | 7 | ✅ Perfect |
 | MBC5 | 8 | 8 | ✅ Perfect |
 
-#### PPU Tests Detail: **12/12 PASSING** ✅
+#### PPU Tests Detail: **7/12 PASSING** ⚠️
 | Test | Status | Notes |
 |------|--------|-------|
-| `hblank_ly_scx_timing-GS` | ✅ PASS | Fixed by SCX M-cycle alignment penalty (C++ modulo bug) |
-| `intr_1_2_timing-GS` | ✅ PASS | Fixed by VBlank OAM pulse |
+| `hblank_ly_scx_timing-GS` | ❌ FAIL | Synthetic SCX M-cycle rounding removed; natural per-dot duration under validation |
+| `intr_1_2_timing-GS` | ❌ FAIL | VBlank-to-line-0 Mode-2 edge remains |
 | `intr_2_0_timing` | ✅ PASS | Fixed by mode 3 penalty (172 dots) |
 | `intr_2_mode0_timing` | ✅ PASS | Fixed by read-before-tick CPU ordering |
-| `intr_2_mode0_timing_sprites` | ✅ PASS | Fixed by sprite mode 3 penalties |
+| `intr_2_mode0_timing_sprites` | ❌ FAIL | Real OBJ stalls implemented; transition threshold remains |
 | `intr_2_mode3_timing` | ✅ PASS | Fixed by read-before-tick CPU ordering |
 | `intr_2_oam_ok_timing` | ✅ PASS | Fixed by read-before-tick CPU ordering |
-| `lcdon_timing-GS` | ✅ PASS | Fixed by LCD enable timing (Fix #6) |
-| `lcdon_write_timing-GS` | ✅ PASS | Fixed by LCD enable timing (Fix #6) |
+| `lcdon_timing-GS` | ❌ FAIL | First-line per-dot startup under validation |
+| `lcdon_write_timing-GS` | ❌ FAIL | First-line access edges under validation |
 | `stat_irq_blocking` | ✅ PASS | |
 | `stat_lyc_onoff` | ✅ PASS | Fixed by STAT IRQ line LCD toggle fix |
 | `vblank_stat_intr-GS` | ✅ PASS | |
@@ -208,11 +215,10 @@ current `--blargg` runner returns timeout for them because it only recognizes th
 external-RAM completion protocol. `halt_bug` renders "Passed". cgb_sound is
 CGB-only and excluded.
 
-#### Mealybug Tearoom: **1/24 PASSING** ❌
+#### Mealybug Tearoom: **4/24 PASSING** ⚠️
 
-Fresh exact-image comparison passes only `m2_win_en_toggle`. All 23 mode-3 tests
-fail, confirming that register-write and BG/window/OBJ fetch effects are not yet
-dot accurate.
+Fresh exact-image comparison passes `m2_win_en_toggle`, `m3_wx_4_change`,
+`m3_wx_4_change_sprites`, and `m3_wx_5_change`. The other 20 tests remain.
 
 ---
 
@@ -501,10 +507,10 @@ The test has 4 rounds:
 
 ## Known Issues & Remaining Work
 
-### PPU — ⚠️ Mooneye Passing, Mode-3 Accuracy Incomplete
+### PPU — ⚠️ Per-Dot Hardware Rewrite In Progress
 
-- ✅ All 12 selected Mooneye PPU tests pass, including `hblank_ly_scx_timing-GS`.
-- ❌ Mealybug Tearoom is 1/24; mid-mode-3 register effects and real OBJ fetch/FIFO timing remain incomplete.
+- ⚠️ 7/12 selected Mooneye PPU tests pass; overall score is 89/94.
+- ⚠️ Mealybug Tearoom is 4/24 exact; real BG/OBJ FIFOs are present, but edge ordering remains incomplete.
 - ✅ Blargg OAM corruption is 8/8 in both copies of the suite.
 
 ### APU — ✅ Implemented
@@ -543,7 +549,7 @@ All boot and serial tests now pass: `boot_regs-dmgABC`, `boot_div-dmgABCmgb`, `b
 ### Not Yet Implemented
 - **MBC3 RTC**: Real-Time Clock registers stubbed to 0 (time features in Pokémon GSC don't work)
 - **Sub-M-cycle bus accuracy**: CPU reads at T3 of M-cycle, not T0 or T4
-- **Mode-3 OBJ fetch/FIFO timing**: 23/24 Mealybug tests currently fail
+- **Mode-3 edge ordering**: 20/24 Mealybug tests currently fail exact comparison
 - **CGB (Game Boy Color)**: See SameBoy Variant Research below for CGB model roadmap
 
 ---

@@ -41,7 +41,23 @@ public:
         mode0StatDelay_ = false;
         firstLineShorter_ = false;
         windowTriggered_ = false;
-        windowLineCounter_ = 0;
+        windowBeingFetched_ = false;
+        wyTriggered_ = false;
+        windowY_ = -1;
+        insertBgPixel_ = false;
+        disableWindowPixelInsertionGlitch_ = false;
+        lineHasFractionalScrolling_ = false;
+        wxJustChangedDots_ = 0;
+        bgFifo_.clear();
+        objFifo_.clear();
+        fetcherState_ = FetcherState::GetTileT1;
+        fetcherPositionX_ = -16;
+        fetcherWindowTileX_ = 0;
+        fetcherFetchingWindow_ = false;
+        lineSpriteCount_ = 0;
+        oamSearchIndex_ = 0;
+        objFetchActive_ = false;
+        objFetchPhase_ = 0;
     }
 
     // Advance the PPU by exactly 1 T-cycle
@@ -50,6 +66,10 @@ public:
     // ── Register access (FF40–FF4B) ─────────────────────────────────
     uint8_t readReg(uint16_t addr) const;
     void    writeReg(uint16_t addr, uint8_t val);
+
+    // Value driven to LCDC during the DMG's one-dot CPU/PPU bus conflict.
+    // This also captures window-fetch state needed by the disable glitch.
+    uint8_t beginDMGLCDCWrite(uint8_t val);
 
     // ── VRAM access (0x8000–0x9FFF) with mode-dependent blocking ────
     uint8_t readVRAM(uint16_t addr) const;
@@ -128,8 +148,9 @@ private:
     // ── STAT interrupt line (rising-edge detection) ─────────────────
     bool statIrqLine_ = false;  // Previous combined STAT IRQ signal
     bool vblankOamPulse_ = false; // One-shot pulse: mode 2 OAM source at VBlank entry
+    bool oamStatEarly_ = false;
     int mode3StartDot_ = 0;       // Debug: measure mode 3 duration
-    int mode3PenaltyDots_ = 0;    // Initial mode 3 penalty (fetcher warm-up)
+    int mode3StartupDots_ = 0;    // VRAM/OAM blocking before the fetch loop
 
     // ── Framebuffer ─────────────────────────────────────────────────
     std::array<uint32_t, SCREEN_WIDTH * SCREEN_HEIGHT> framebuffer_{};
@@ -152,6 +173,7 @@ private:
     };
     std::array<Sprite, 10> lineSprites_{};
     int lineSpriteCount_ = 0;
+    int oamSearchIndex_ = 0;
 
     // ── Background pixel FIFO ───────────────────────────────────────
     // Each FIFO entry holds a 2-bit color index + source info
@@ -162,8 +184,8 @@ private:
         bool    isSprite;
     };
 
-    // Simple shift-register FIFO (max 8 pixels wide)
-    static constexpr int FIFO_SIZE = 16;
+    // Hardware shift-register FIFOs are eight pixels wide.
+    static constexpr int FIFO_SIZE = 8;
     struct PixelFIFO {
         FIFOPixel pixels[FIFO_SIZE]{};
         int head = 0;
@@ -192,33 +214,49 @@ private:
     };
 
     PixelFIFO bgFifo_;
+    PixelFIFO objFifo_;
 
     // ── Tile fetcher state machine ──────────────────────────────────
     enum class FetcherState {
-        ReadTileID,
-        ReadTileDataLow,
-        ReadTileDataHigh,
-        PushToFIFO
+        GetTileT1,
+        GetTileT2,
+        GetTileDataLowT1,
+        GetTileDataLowT2,
+        GetTileDataHighT1,
+        GetTileDataHighT2,
+        Push
     };
 
-    FetcherState fetcherState_ = FetcherState::ReadTileID;
-    int fetcherClock_ = 0;        // Sub-dot counter (each step = 2 dots)
-    int fetcherTileX_ = 0;        // Current tile column being fetched
+    FetcherState fetcherState_ = FetcherState::GetTileT1;
+    uint16_t fetcherMapAddr_ = 0;
+    uint16_t fetcherDataAddr_ = 0;
+    int fetcherWindowTileX_ = 0;
     uint8_t fetcherTileId_ = 0;
     uint8_t fetcherTileDataLow_ = 0;
     uint8_t fetcherTileDataHigh_ = 0;
     bool fetcherFetchingWindow_ = false;
 
     // ── Pixel transfer state ────────────────────────────────────────
-    int pixelX_ = 0;              // Current X pixel being pushed (0–159)
-    int discardPixels_ = 0;       // SCX % 8 pixels to discard
-    bool windowTriggered_ = false; // Window active for this line
-    int windowLineCounter_ = 0;   // Internal window line counter
+    int pixelX_ = 0;               // LCD X (0–159)
+    int fetcherPositionX_ = -16;    // PPU's signed logical X
+    bool windowTriggered_ = false;  // WX comparator has activated window
+    bool windowBeingFetched_ = false;
+    bool wyTriggered_ = false;      // WY comparator latch for this frame
+    int windowY_ = -1;              // Internal window line, increments on activation
+    bool insertBgPixel_ = false;     // DMG window-reactivation color-zero pixel
+    bool disableWindowPixelInsertionGlitch_ = false;
+    bool lineHasFractionalScrolling_ = false;
+    int wxJustChangedDots_ = 0;
 
     // ── Sprite fetch state ──────────────────────────────────────────
-    bool spriteFetchPending_ = false;
-    int spriteFetchDot_ = 0;
-    int currentSpriteIdx_ = 0;    // Index into lineSprites_ being fetched
+    bool objFetchActive_ = false;
+    int objFetchPhase_ = 0;
+    int currentSpriteIdx_ = 0;
+    uint8_t objTile_ = 0;
+    uint8_t objFlags_ = 0;
+    uint8_t objDataLow_ = 0;
+    uint8_t objDataHigh_ = 0;
+    uint16_t objDataAddr_ = 0;
 
     // ── DMG palette color lookup table ──────────────────────────────
     static constexpr uint32_t dmgColors_[4] = {
@@ -234,10 +272,17 @@ private:
     void tickHBlank();
     void tickVBlank();
 
-    void evaluateSprites();
-    void fetcherTick();
-    void pushPixel();
-    void mixSpritePixel(int spriteIdx);
+    void scanOAMEntry(int index);
+    void sortLineSprites();
+    void beginPixelTransfer(int startupDots);
+    bool handleWindow();
+    bool beginObjectFetchIfNeeded();
+    void tickObjectFetch();
+    void advanceFetcher();
+    void renderPixelIfPossible();
+    void overlayObjectRow();
+    uint16_t objectLineAddress(uint8_t y, uint8_t tile, uint8_t flags) const;
+    uint8_t fetcherY() const;
 
     int accessedOAMRow() const;
     uint16_t readOAMWord(int offset) const;

@@ -25,13 +25,16 @@ void PPU::serialize(SaveState& ss) const {
     ss.write<int32_t>(dotCounter_);
     ss.writeBool(lcdWasOff_);
     ss.writeBool(firstLineAfterEnable_);
+    ss.writeBool(firstLineShorter_);
+    ss.writeBool(mode0StatDelay_);
     ss.write<int32_t>(vblankLine_);
 
     // STAT IRQ
     ss.writeBool(statIrqLine_);
     ss.writeBool(vblankOamPulse_);
+    ss.writeBool(oamStatEarly_);
     ss.write<int32_t>(mode3StartDot_);
-    ss.write<int32_t>(mode3PenaltyDots_);
+    ss.write<int32_t>(mode3StartupDots_);
 
     // Framebuffer + frame ready flag
     ss.writeBool(frameReady_);
@@ -43,6 +46,7 @@ void PPU::serialize(SaveState& ss) const {
 
     // Sprite evaluation
     ss.write<int32_t>(lineSpriteCount_);
+    ss.write<int32_t>(oamSearchIndex_);
     for (int i = 0; i < lineSpriteCount_; i++) {
         ss.write<uint8_t>(lineSprites_[i].y);
         ss.write<uint8_t>(lineSprites_[i].x);
@@ -62,10 +66,21 @@ void PPU::serialize(SaveState& ss) const {
         ss.writeBool(p.isSprite);
     }
 
+    // OBJ FIFO
+    ss.write<int32_t>(objFifo_.count);
+    for (int i = 0; i < objFifo_.count; i++) {
+        const auto& p = objFifo_.pixels[(objFifo_.head + i) % FIFO_SIZE];
+        ss.write<uint8_t>(p.color);
+        ss.write<uint8_t>(p.palette);
+        ss.writeBool(p.bgPriority);
+        ss.writeBool(p.isSprite);
+    }
+
     // Fetcher state
     ss.write<uint8_t>(static_cast<uint8_t>(fetcherState_));
-    ss.write<int32_t>(fetcherClock_);
-    ss.write<int32_t>(fetcherTileX_);
+    ss.write<uint16_t>(fetcherMapAddr_);
+    ss.write<uint16_t>(fetcherDataAddr_);
+    ss.write<int32_t>(fetcherWindowTileX_);
     ss.write<uint8_t>(fetcherTileId_);
     ss.write<uint8_t>(fetcherTileDataLow_);
     ss.write<uint8_t>(fetcherTileDataHigh_);
@@ -73,14 +88,25 @@ void PPU::serialize(SaveState& ss) const {
 
     // Pixel transfer
     ss.write<int32_t>(pixelX_);
-    ss.write<int32_t>(discardPixels_);
+    ss.write<int32_t>(fetcherPositionX_);
     ss.writeBool(windowTriggered_);
-    ss.write<int32_t>(windowLineCounter_);
+    ss.writeBool(windowBeingFetched_);
+    ss.writeBool(wyTriggered_);
+    ss.write<int32_t>(windowY_);
+    ss.writeBool(insertBgPixel_);
+    ss.writeBool(disableWindowPixelInsertionGlitch_);
+    ss.writeBool(lineHasFractionalScrolling_);
+    ss.write<int32_t>(wxJustChangedDots_);
 
     // Sprite fetch
-    ss.writeBool(spriteFetchPending_);
-    ss.write<int32_t>(spriteFetchDot_);
+    ss.writeBool(objFetchActive_);
+    ss.write<int32_t>(objFetchPhase_);
     ss.write<int32_t>(currentSpriteIdx_);
+    ss.write<uint8_t>(objTile_);
+    ss.write<uint8_t>(objFlags_);
+    ss.write<uint8_t>(objDataLow_);
+    ss.write<uint8_t>(objDataHigh_);
+    ss.write<uint16_t>(objDataAddr_);
 }
 
 void PPU::deserialize(SaveState& ss) {
@@ -103,13 +129,16 @@ void PPU::deserialize(SaveState& ss) {
     dotCounter_ = ss.read<int32_t>();
     lcdWasOff_ = ss.readBool();
     firstLineAfterEnable_ = ss.readBool();
+    firstLineShorter_ = ss.readBool();
+    mode0StatDelay_ = ss.readBool();
     vblankLine_ = ss.read<int32_t>();
 
     // STAT IRQ
     statIrqLine_ = ss.readBool();
     vblankOamPulse_ = ss.readBool();
+    oamStatEarly_ = ss.readBool();
     mode3StartDot_ = ss.read<int32_t>();
-    mode3PenaltyDots_ = ss.read<int32_t>();
+    mode3StartupDots_ = ss.read<int32_t>();
 
     // Framebuffer + frame ready flag
     frameReady_ = ss.readBool();
@@ -121,6 +150,7 @@ void PPU::deserialize(SaveState& ss) {
 
     // Sprite evaluation
     lineSpriteCount_ = ss.read<int32_t>();
+    oamSearchIndex_ = ss.read<int32_t>();
     for (int i = 0; i < lineSpriteCount_; i++) {
         lineSprites_[i].y = ss.read<uint8_t>();
         lineSprites_[i].x = ss.read<uint8_t>();
@@ -145,10 +175,23 @@ void PPU::deserialize(SaveState& ss) {
     }
     (void)fifoHead; // Head is normalized to 0 on restore
 
+    // OBJ FIFO
+    objFifo_.clear();
+    int objFifoCount = ss.read<int32_t>();
+    for (int i = 0; i < objFifoCount; i++) {
+        FIFOPixel p;
+        p.color = ss.read<uint8_t>();
+        p.palette = ss.read<uint8_t>();
+        p.bgPriority = ss.readBool();
+        p.isSprite = ss.readBool();
+        objFifo_.push(p);
+    }
+
     // Fetcher state
     fetcherState_ = static_cast<FetcherState>(ss.read<uint8_t>());
-    fetcherClock_ = ss.read<int32_t>();
-    fetcherTileX_ = ss.read<int32_t>();
+    fetcherMapAddr_ = ss.read<uint16_t>();
+    fetcherDataAddr_ = ss.read<uint16_t>();
+    fetcherWindowTileX_ = ss.read<int32_t>();
     fetcherTileId_ = ss.read<uint8_t>();
     fetcherTileDataLow_ = ss.read<uint8_t>();
     fetcherTileDataHigh_ = ss.read<uint8_t>();
@@ -156,12 +199,23 @@ void PPU::deserialize(SaveState& ss) {
 
     // Pixel transfer
     pixelX_ = ss.read<int32_t>();
-    discardPixels_ = ss.read<int32_t>();
+    fetcherPositionX_ = ss.read<int32_t>();
     windowTriggered_ = ss.readBool();
-    windowLineCounter_ = ss.read<int32_t>();
+    windowBeingFetched_ = ss.readBool();
+    wyTriggered_ = ss.readBool();
+    windowY_ = ss.read<int32_t>();
+    insertBgPixel_ = ss.readBool();
+    disableWindowPixelInsertionGlitch_ = ss.readBool();
+    lineHasFractionalScrolling_ = ss.readBool();
+    wxJustChangedDots_ = ss.read<int32_t>();
 
     // Sprite fetch
-    spriteFetchPending_ = ss.readBool();
-    spriteFetchDot_ = ss.read<int32_t>();
+    objFetchActive_ = ss.readBool();
+    objFetchPhase_ = ss.read<int32_t>();
     currentSpriteIdx_ = ss.read<int32_t>();
+    objTile_ = ss.read<uint8_t>();
+    objFlags_ = ss.read<uint8_t>();
+    objDataLow_ = ss.read<uint8_t>();
+    objDataHigh_ = ss.read<uint8_t>();
+    objDataAddr_ = ss.read<uint16_t>();
 }

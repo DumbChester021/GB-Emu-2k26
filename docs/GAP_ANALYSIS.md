@@ -1,15 +1,15 @@
 # GB-Emu-2k26 — DMG Accuracy Gap Analysis
 
-> **Current Score: 94/94 DMG-ABC tests passing** ✅
-> **Target: Selected Mooneye DMG tests (94/94) — ACHIEVED**
+> **Current Score: 89/94 selected DMG-ABC tests passing** ⚠️
+> **Target: hardware-accurate DMG-CPU B pipeline; temporary regressions are tracked**
 > **DMG-ACID2: PASSING** ✅
 > **Blargg: CPU/timing/APU/HALT and OAM bug suites pass** ✅
-> **Mealybug Tearoom: 1/24** ❌
-> **Last Verified: 2026-08-10 (rebuilt and executed from current code)**
+> **Mealybug Tearoom: 4/24 exact** ⚠️
+> **Last Verified: 2026-08-11 (rebuilt and executed from current code)**
 
 ---
 
-## Current Test Results (2026-08-10)
+## Current Test Results (2026-08-11)
 
 | Category | Pass | Total | Status |
 |----------|------|-------|--------|
@@ -26,7 +26,7 @@
 | MBC5 | 8 | 8 | ✅ Perfect |
 | Interrupts | 3 | 3 | ✅ Perfect |
 | OAM DMA | 6 | 6 | ✅ Perfect |
-| PPU | 12 | 12 | ✅ Perfect |
+| PPU | 7 | 12 | ⚠️ Hardware rewrite in progress |
 | Boot Regs (DMG-ABC) | 1 | 1 | ✅ Perfect |
 | Boot DIV (DMG-ABC) | 1 | 1 | ✅ Perfect |
 | Boot HWIO (DMG-ABC) | 1 | 1 | ✅ Perfect |
@@ -39,7 +39,7 @@
 | Blargg halt_bug | 1 | 1 | ✅ Perfect |
 | Blargg oam_bug | 8 | 8 | ✅ Perfect |
 | Blargg oam_bug-2 | 8 | 8 | ✅ Perfect |
-| Mealybug Tearoom | 1 | 24 | ❌ 23 mode-3 image comparisons fail |
+| Mealybug Tearoom | 4 | 24 | ⚠️ 20 exact image comparisons fail |
 
 > [!NOTE]
 > `cpu_instrs`, `instr_timing`, and the original `mem_timing` print passing
@@ -54,10 +54,15 @@
 
 ## Failing Tests
 
-The selected 94 Mooneye DMG-ABC tests and current Blargg DMG suites pass, but
-broader accuracy tests still expose gaps:
+All selected non-PPU Mooneye tests and the current Blargg DMG suites pass. The
+per-dot PPU replacement intentionally removed synthetic penalty rounding and
+currently exposes these remaining gaps:
 
-- Mealybug Tearoom: 23/24 fail; only `m2_win_en_toggle` passes.
+- Mooneye PPU: `hblank_ly_scx_timing-GS`, `intr_1_2_timing-GS`,
+  `intr_2_mode0_timing_sprites`, `lcdon_timing-GS`, and
+  `lcdon_write_timing-GS` fail.
+- Mealybug Tearoom: 20/24 fail. The exact passes are `m2_win_en_toggle`,
+  `m3_wx_4_change`, `m3_wx_4_change_sprites`, and `m3_wx_5_change`.
 - MBC3 RTC is unimplemented and has not passed `rtc3test`.
 
 ---
@@ -67,29 +72,30 @@ broader accuracy tests still expose gaps:
 | # | Feature | Tests Fixed | Status |
 |---|---------|-------------|--------|
 | 1 | **OAM DMA bus conflicts** | `sources-GS`, `reg_read`, `oam_dma_restart`, `oam_dma_timing`, `oam_dma_start` | ✅ All 6 pass |
-| 2 | **Sprite mode 3 penalties** | `intr_2_mode0_timing_sprites` | ✅ Pass |
-| 3 | **LCD enable timing** | `lcdon_timing-GS`, `lcdon_write_timing-GS` | ✅ Both pass |
+| 2 | **Real OBJ FIFO/fetch stalls** | Mealybug sprite behavior | ⚠️ Implemented; exact transition timing remains |
+| 3 | **LCD enable timing** | `lcdon_timing-GS`, `lcdon_write_timing-GS` | ⚠️ Revalidation needed after pipeline rewrite |
 | 4 | **STAT LYC on/off** | `stat_lyc_onoff` | ✅ Pass |
 | 5 | **TIMA write during reload** | `tima_write_reloading` | ✅ Pass |
 | 6 | **IE push edge case** | `ie_push` | ✅ Pass |
 | 7 | **Boot DIV** | `boot_div-dmgABCmgb` | ✅ Pass |
 | 8 | **Boot HWIO** | `boot_hwio-dmgABCmgb` | ✅ Pass |
 | 9 | **Boot SCLK Align** | `boot_sclk_align-dmgABCmgb` | ✅ Pass |
-| 10 | **SCX M-cycle alignment** | `hblank_ly_scx_timing-GS` | ✅ Pass |
+| 10 | **SCX fine-scroll pipeline** | Mealybug SCX effects | ⚠️ Synthetic M-cycle rounding removed |
 | 11 | **DMG-B OAM corruption** | Blargg `oam_bug`, `oam_bug-2` | ✅ Both 8/8 |
 
 ---
 
 ## SameBoy Cross-Reference
 
-All previously failing tests in the selected Mooneye set now pass. This matches
-SameBoy on that 94-test subset only; it does not imply equal overall accuracy.
+The bundled SameBoy source is the behavioral reference for the replacement
+pipeline. This project does not currently match SameBoy on the full selected
+Mooneye subset: the measured score is 89/94.
 
 ### Variant Confirmation
 
 SameBoy **only implements `GB_MODEL_DMG_B`** (source: [`Core/model.h`](https://github.com/LIJI32/SameBoy/blob/master/Core/model.h)). DMG-0, DMG-A, DMG-C are commented out. SameBoy passes **all 94 Mooneye DMG acceptance tests** we run.
 
-**We match SameBoy's 94/94 score on this selected Mooneye set.**
+**Current project score: 89/94; SameBoy remains the oracle, not a claimed parity result.**
 
 ### DMG Revision Differences (for reference)
 
@@ -117,9 +123,11 @@ Only boot ROM and APU wave behavior differ between DMG revisions. Everything els
 ## What to Tackle Next
 
 > [!TIP]
-> **Next accuracy target: mode-3 PPU behavior.** Preserve 94/94 Mooneye while
-> implementing sub-M-cycle CPU bus phasing and a real OBJ fetch/FIFO pipeline,
-> then drive Mealybug from 1/24 to 24/24.
+> **Next accuracy target: finish edge ordering around the new mode-3 pipeline.**
+> The real OBJ FIFO/fetcher is now present. Align CPU register conflicts,
+> HBlank/Mode-2 interrupt edges, LCD-enable startup, and the WX=6 comparator,
+> then drive both Mooneye and Mealybug back upward without restoring synthetic
+> penalty formulas.
 
 > [!NOTE]
 > **APU is implemented and Blargg `dmg_sound` is verified at 12/12.** Broader
@@ -163,5 +171,5 @@ The [DMG-ACID2](https://github.com/mattcurrie/dmg-acid2) test validates correct 
 
 ### Not Yet Implemented
 - **MBC3 RTC**: Real-Time Clock registers stubbed (Pokémon GSC time features)
-- **Mode-3 fetch timing**: 23/24 Mealybug tests fail
-- **Sprite FIFO fetch pausing**: Pipeline does not perform real dot-timed OBJ fetches
+- **Mode-3 edge timing**: 20/24 Mealybug tests fail exact comparison
+- **CPU/PPU sub-M-cycle ordering**: several register writes are still sampled on the wrong edge

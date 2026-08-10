@@ -137,6 +137,36 @@ uint8_t CPU::readByte(uint16_t addr) {
 }
 
 void CPU::writeByte(uint16_t addr, uint8_t val) {
+    // LCDC is wired directly into the DMG LCD pipeline. During the conflict
+    // dot, most bits retain their old state; a newly asserted BG-enable bit is
+    // already visible. OBJ/window have additional fetcher-side behavior.
+    if (addr == 0xFF40) {
+        bus_.write(addr, bus_.ppu().beginDMGLCDCWrite(val));
+        bus_.tick();
+        totalCycles_++;
+        bus_.write(addr, val);
+        for (int i = 0; i < 3; ++i) {
+            bus_.tick();
+            totalCycles_++;
+        }
+        return;
+    }
+
+    // DMG palette registers drive the LCD bus directly. For the first dot of
+    // a write, old and new bits are both visible; the requested value wins on
+    // the following dot. The M-cycle remains exactly four T-cycles long.
+    if (addr >= 0xFF47 && addr <= 0xFF49) {
+        uint8_t old = bus_.read(addr);
+        bus_.write(addr, static_cast<uint8_t>(old | val));
+        bus_.tick();
+        totalCycles_++;
+        bus_.write(addr, val);
+        for (int i = 0; i < 3; ++i) {
+            bus_.tick();
+            totalCycles_++;
+        }
+        return;
+    }
     bus_.write(addr, val);
     tick4();
 }

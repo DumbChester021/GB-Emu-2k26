@@ -39,14 +39,17 @@ void PPU::tick() {
         lcdWasOff_ = false;
         ly_ = 0;
         dotCounter_ = 0;
-        windowLineCounter_ = 0;
         pixelX_ = 0;
         bgFifo_.clear();
-        fetcherState_ = FetcherState::ReadTileID;
-        fetcherClock_ = 0;
-        fetcherTileX_ = 0;
+        objFifo_.clear();
+        fetcherState_ = FetcherState::GetTileT1;
+        fetcherPositionX_ = -16;
+        fetcherWindowTileX_ = 0;
         lineSpriteCount_ = 0;
-        spriteFetchPending_ = false;
+        oamSearchIndex_ = 0;
+        objFetchActive_ = false;
+        wyTriggered_ = false;
+        windowY_ = -1;
 
         // Line 0 after LCD enable starts in mode 0 briefly
         mode_ = MODE_HBLANK;
@@ -75,64 +78,17 @@ void PPU::tick() {
 // ══════════════════════════════════════════════════════════════════════
 
 void PPU::tickOAMSearch() {
-    // Sprite evaluation on first dot of OAM search
-    if (dotCounter_ == 5) {
-        evaluateSprites();
+    // The DMG examines one OAM entry every two dots. Only Y and X are
+    // retained here; tile number and attributes are read later by Mode 3.
+    if (dotCounter_ >= 6 && (dotCounter_ & 1) == 0 && oamSearchIndex_ < 40) {
+        scanOAMEntry(oamSearchIndex_++);
     }
 
     if (dotCounter_ >= OAM_DOTS + 4) {
-        // Transition to Mode 3 (Pixel Transfer) at dot 84
-        // (OAM_DOTS=80 + 4 pre-OAM dots)
-        setMode(MODE_XFER);
-        mode3StartDot_ = dotCounter_;
-        mode3PenaltyDots_ = 5;  // Initial penalty before first pixel
-
-        // ── SCX M-cycle alignment penalty ────────────────────────────
-        // The FIFO pixel discard adds exactly (SCX%8) extra dots to Mode 3.
-        // But Mode 0 entry must align to 4-dot (M-cycle) boundaries so the
-        // STAT interrupt fires at the correct M-cycle. This adds padding
-        // dots to round the SCX penalty up to the next M-cycle boundary.
-        //   SCX%8 = 0:     0 extra dots (Mode 0 at dot 256)
-        //   SCX%8 = 1-4: +3/+2/+1/+0 dots → total 4 (Mode 0 at dot 260)
-        //   SCX%8 = 5-7: +3/+2/+1 dots   → total 8 (Mode 0 at dot 264)
-        int scxFine = scx_ & 7;
-        if (scxFine > 0) {
-            mode3PenaltyDots_ += (4 - (scxFine % 4)) % 4;
-        }
-
-        // ── Sprite mode 3 penalties ─────────────────────────────────
-        // On DMG, each sprite extends mode 3. The cost per sprite is:
-        //   6 dots (fixed sprite fetch) + alignment to fetcher state
-        // Sprites at the same X share the alignment cost.
-        // Sprites at X >= 168 are fully off-screen right (no penalty).
-        for (int i = 0; i < lineSpriteCount_; i++) {
-            int sx = lineSprites_[i].x;
-            if (sx >= 168) continue;
-
-            // Check if a previous sprite already paid alignment for this X
-            bool alignmentPaid = false;
-            for (int j = 0; j < i; j++) {
-                if (lineSprites_[j].x == sx) {
-                    alignmentPaid = true;
-                    break;
-                }
-            }
-
-            if (!alignmentPaid) {
-                mode3PenaltyDots_ += std::max(0, 5 - static_cast<int>((sx + scx_) % 8));
-            }
-            mode3PenaltyDots_ += 6;  // Fixed per-sprite cost
-        }
-
-        pixelX_ = 0;
-        discardPixels_ = scx_ & 7;
-        bgFifo_.clear();
-        fetcherState_ = FetcherState::ReadTileID;
-        fetcherClock_ = 0;
-        fetcherTileX_ = 0;
-        windowTriggered_ = false;
-        spriteFetchPending_ = false;
-        currentSpriteIdx_ = 0;
+        sortLineSprites();
+        // Mode 3 takes five dots from exposing its mode bits to entering the
+        // fetch loop. The transition dot is already consumed here.
+        beginPixelTransfer(4);
     }
 }
 
@@ -141,51 +97,33 @@ void PPU::tickOAMSearch() {
 // ══════════════════════════════════════════════════════════════════════
 
 void PPU::tickPixelTransfer() {
-    // Initial penalty dots: DMG needs 12 dots before first pixel push
-    // (our fetcher provides 7 dots naturally, this adds 5 more)
-    if (mode3PenaltyDots_ > 0) {
-        mode3PenaltyDots_--;
+    // Mode 3's initial bus-blocking interval precedes the actual fetch loop.
+    if (mode3StartupDots_ > 0) {
+        mode3StartupDots_--;
         return;
     }
 
-    // Check if window should activate
-    if (!windowTriggered_ && (lcdc_ & 0x20)) {
-        if (ly_ >= wy_) {
-            int wxTrigger = wx_ - 7;
-            if (wxTrigger < 0) wxTrigger = 0;
-            if (wxTrigger < SCREEN_WIDTH && pixelX_ == wxTrigger) {
-                windowTriggered_ = true;
-                fetcherFetchingWindow_ = true;
-                fetcherState_ = FetcherState::ReadTileID;
-                fetcherClock_ = 0;
-                fetcherTileX_ = 0;
-                bgFifo_.clear();
-                // WX < 7: clip first (7 - WX) pixels of the window tile
-                discardPixels_ = (wx_ < 7) ? (7 - wx_) : 0;
-            }
+    if (handleWindow()) {
+        if (wxJustChangedDots_ > 0) wxJustChangedDots_--;
+        return;
+    }
+
+    if (objFetchActive_) {
+        tickObjectFetch();
+    } else if (beginObjectFetchIfNeeded()) {
+        tickObjectFetch();
+    } else {
+        renderPixelIfPossible();
+        advanceFetcher();
+
+        if (pixelX_ >= SCREEN_WIDTH) {
+            setMode(MODE_HBLANK);
+            fetcherFetchingWindow_ = false;
         }
     }
 
-    // Run the tile fetcher
-    fetcherTick();
-
-    // Try to push a pixel to the screen
-    if (bgFifo_.size() > 0) {
-        // Check for sprite at current pixel X before pushing
-        if (lcdc_ & 0x02) {
-            for (int i = 0; i < lineSpriteCount_; i++) {
-                int spriteScreenX = lineSprites_[i].x - 8;
-                if (spriteScreenX <= pixelX_ && (spriteScreenX + 8) > pixelX_) {
-                    mixSpritePixel(i);
-                }
-            }
-        }
-        pushPixel();
-    }
-
-    if (pixelX_ >= SCREEN_WIDTH) {
-        setMode(MODE_HBLANK);
-        fetcherFetchingWindow_ = false;
+    if (wxJustChangedDots_ > 0) {
+        wxJustChangedDots_--;
     }
 }
 
@@ -201,19 +139,9 @@ void PPU::tickHBlank() {
         if (dotCounter_ >= 78) {
             firstLineAfterEnable_ = false;
             firstLineShorter_ = true;  // First line is 448 dots, not 456
-            setMode(MODE_XFER);
-            mode3StartDot_ = dotCounter_;
-            mode3PenaltyDots_ = 6;  // Initial penalty: 6 penalty + 6 fetch (PushToFIFO instant) = 12 dots
-            pixelX_ = 0;
-            discardPixels_ = scx_ & 7;
-            bgFifo_.clear();
-            fetcherState_ = FetcherState::ReadTileID;
-            fetcherClock_ = 0;
-            fetcherTileX_ = 0;
-            windowTriggered_ = false;
-            spriteFetchPending_ = false;
-            currentSpriteIdx_ = 0;
             lineSpriteCount_ = 0;  // No sprites on first line
+            if ((lcdc_ & 0x20) && wy_ == ly_) wyTriggered_ = true;
+            beginPixelTransfer(11);
             return;
         }
         return;  // Stay in mode 0 until dot 78
@@ -221,8 +149,18 @@ void PPU::tickHBlank() {
 
     // Pre-OAM transition: normal lines stay in mode 0 for 4 dots before mode 2
     if (dotCounter_ <= 4 && mode_ == MODE_HBLANK) {
+        // On nonzero DMG lines, the interrupt source leads STAT's visible
+        // mode bits by one dot. Line 0 is the documented exception.
+        if (dotCounter_ == 3 && ly_ != 0) {
+            oamStatEarly_ = true;
+            updateStatIRQ();
+        }
         if (dotCounter_ == 4) {
             setMode(MODE_OAM);
+            oamStatEarly_ = false;
+            lineSpriteCount_ = 0;
+            oamSearchIndex_ = 0;
+            if ((lcdc_ & 0x20) && wy_ == ly_) wyTriggered_ = true;
             // LYC coincidence becomes valid at this point
             // (SameBoy: ly_for_comparison set to actual LY here)
             checkLYC();
@@ -235,14 +173,6 @@ void PPU::tickHBlank() {
     if (dotCounter_ >= lineLength) {
         firstLineShorter_ = false;
         dotCounter_ = 0;
-
-        // Track window line counter — only increments when the window
-        // actually rendered on this scanline (windowTriggered_).
-        // Per Pan Docs / SameBoy: counter does NOT advance when WX is
-        // offscreen, even if LY >= WY.
-        if (windowTriggered_) {
-            windowLineCounter_++;
-        }
 
         ly_++;
 
@@ -293,8 +223,12 @@ void PPU::tickVBlank() {
             // Frame complete — 10 VBlank lines (144–153) elapsed
             ly_ = 0;
             vblankLine_ = 0;
-            windowLineCounter_ = 0;
-            setMode(MODE_OAM);
+            windowY_ = -1;
+            wyTriggered_ = false;
+            setMode(MODE_HBLANK);
+            oamStatEarly_ = false;
+            lineSpriteCount_ = 0;
+            oamSearchIndex_ = 0;
         } else {
             // Normal VBlank line — increment visible LY
             ly_ = VISIBLE_LINES + vblankLine_;
@@ -316,33 +250,28 @@ void PPU::tickVBlank() {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// Sprite evaluation — scan OAM for sprites on the current scanline
+// Mode 2 sprite selection — one OAM entry every two dots
 // ══════════════════════════════════════════════════════════════════════
 
-void PPU::evaluateSprites() {
-    lineSpriteCount_ = 0;
+void PPU::scanOAMEntry(int index) {
+    if (lineSpriteCount_ >= 10 || index < 0 || index >= 40) return;
+
     int spriteHeight = (lcdc_ & 0x04) ? 16 : 8;
+    uint8_t spriteY = oam_[index * 4];
+    int screenY = static_cast<int>(spriteY) - 16;
 
-    for (int i = 0; i < 40 && lineSpriteCount_ < 10; i++) {
-        uint8_t spriteY = oam_[i * 4 + 0];
-        uint8_t spriteX = oam_[i * 4 + 1];
-        uint8_t tileIdx = oam_[i * 4 + 2];
-        uint8_t flags   = oam_[i * 4 + 3];
-
-        int screenY = spriteY - 16;
-
-        if (ly_ >= screenY && ly_ < screenY + spriteHeight) {
-            Sprite& s = lineSprites_[lineSpriteCount_];
-            s.y = spriteY;
-            s.x = spriteX;
-            s.tile = tileIdx;
-            s.flags = flags;
-            s.oamIndex = i;
-            lineSpriteCount_++;
-        }
+    if (static_cast<int>(ly_) >= screenY &&
+        static_cast<int>(ly_) < screenY + spriteHeight) {
+        Sprite& s = lineSprites_[lineSpriteCount_++];
+        s.y = spriteY;
+        s.x = oam_[index * 4 + 1];
+        s.tile = 0;
+        s.flags = 0;
+        s.oamIndex = static_cast<uint8_t>(index);
     }
+}
 
-    // DMG priority: sort by X position, then by OAM index
+void PPU::sortLineSprites() {
     for (int i = 1; i < lineSpriteCount_; i++) {
         Sprite key = lineSprites_[i];
         int j = i - 1;
@@ -355,80 +284,266 @@ void PPU::evaluateSprites() {
     }
 }
 
+void PPU::beginPixelTransfer(int startupDots) {
+    setMode(MODE_XFER);
+    mode3StartDot_ = dotCounter_;
+    mode3StartupDots_ = startupDots;
+
+    pixelX_ = 0;
+    fetcherPositionX_ = -16;
+    bgFifo_.clear();
+    objFifo_.clear();
+    for (int i = 0; i < 8; ++i) bgFifo_.push(FIFOPixel{});
+
+    fetcherState_ = FetcherState::GetTileT1;
+    fetcherWindowTileX_ = 0;
+    fetcherFetchingWindow_ = false;
+    windowTriggered_ = false;
+    windowBeingFetched_ = false;
+    insertBgPixel_ = false;
+    disableWindowPixelInsertionGlitch_ = false;
+    lineHasFractionalScrolling_ = false;
+
+    currentSpriteIdx_ = 0;
+    objFetchActive_ = false;
+    objFetchPhase_ = 0;
+}
+
+bool PPU::handleWindow() {
+    bool activate = false;
+
+    if (!windowTriggered_ && wyTriggered_ && (lcdc_ & 0x20)) {
+        if (wx_ == 0) {
+            activate = fetcherPositionX_ == -7 ||
+                       (fetcherPositionX_ == -16 && (scx_ & 7)) ||
+                       (fetcherPositionX_ >= -15 && fetcherPositionX_ <= -8);
+        } else if (wx_ < 166) {
+            if (static_cast<int>(wx_) == fetcherPositionX_ + 7) {
+                activate = true;
+            } else if (static_cast<int>(wx_) == fetcherPositionX_ + 6 &&
+                       wxJustChangedDots_ == 0) {
+                activate = true;
+                if (pixelX_ > 0) pixelX_--;
+            }
+        }
+    }
+
+    if (activate) {
+        windowY_++;
+        fetcherWindowTileX_ = 0;
+        bgFifo_.clear();
+        windowTriggered_ = true;
+        fetcherFetchingWindow_ = true;
+        windowBeingFetched_ = true;
+        fetcherState_ = FetcherState::GetTileT1;
+        return wx_ == 0 && (scx_ & 7);
+    }
+
+    if (windowTriggered_ && !windowBeingFetched_ &&
+        static_cast<int>(wx_) == fetcherPositionX_ + 7 &&
+        fetcherState_ == FetcherState::GetTileT1 && bgFifo_.size() == 8) {
+        insertBgPixel_ = true;
+    }
+    return false;
+}
+
+bool PPU::beginObjectFetchIfNeeded() {
+    int matchX = std::max(0, fetcherPositionX_ + 8);
+    while (currentSpriteIdx_ < lineSpriteCount_ &&
+           lineSprites_[currentSpriteIdx_].x < matchX) {
+        currentSpriteIdx_++;
+    }
+
+    if (!(lcdc_ & 0x02) || currentSpriteIdx_ >= lineSpriteCount_ ||
+        lineSprites_[currentSpriteIdx_].x != matchX) {
+        return false;
+    }
+
+    objFetchActive_ = true;
+    objFetchPhase_ = -1;
+    return true;
+}
+
+void PPU::tickObjectFetch() {
+    if (!objFetchActive_ || currentSpriteIdx_ >= lineSpriteCount_) {
+        objFetchActive_ = false;
+        return;
+    }
+
+    if (!(lcdc_ & 0x02)) {
+        objFetchActive_ = false;
+        return;
+    }
+
+    if (objFetchPhase_ < 0) {
+        if (static_cast<int>(fetcherState_) <
+                static_cast<int>(FetcherState::GetTileDataHighT2) ||
+            bgFifo_.empty()) {
+            advanceFetcher();
+            return;
+        }
+        objFetchPhase_ = 0;
+    }
+
+    const Sprite& sprite = lineSprites_[currentSpriteIdx_];
+    switch (objFetchPhase_) {
+        case 0:
+            advanceFetcher();
+            objFetchPhase_ = 1;
+            break;
+        case 1: {
+            advanceFetcher();
+            const int base = sprite.oamIndex * 4;
+            objTile_ = oam_[base + 2];
+            objFlags_ = oam_[base + 3];
+            objFetchPhase_ = 2;
+            break;
+        }
+        case 2:
+            objFetchPhase_ = 3;
+            break;
+        case 3:
+            objDataAddr_ = objectLineAddress(sprite.y, objTile_, objFlags_);
+            objDataLow_ = vram_[objDataAddr_];
+            objFetchPhase_ = 4;
+            break;
+        case 4:
+            objFetchPhase_ = 5;
+            break;
+        case 5:
+            objDataAddr_ = objectLineAddress(sprite.y, objTile_, objFlags_);
+            objDataHigh_ = vram_[objDataAddr_ + 1];
+            overlayObjectRow();
+            currentSpriteIdx_++;
+            objFetchActive_ = false;
+            break;
+    }
+}
+
+uint16_t PPU::objectLineAddress(uint8_t y, uint8_t tile, uint8_t flags) const {
+    bool tall = (lcdc_ & 0x04) != 0;
+    uint8_t tileY = static_cast<uint8_t>(ly_ - y) & (tall ? 0x0F : 0x07);
+    if (flags & 0x40) tileY ^= tall ? 0x0F : 0x07;
+    uint8_t tileIndex = tall ? (tile & 0xFE) : tile;
+    return static_cast<uint16_t>(tileIndex * 16 + tileY * 2);
+}
+
+void PPU::overlayObjectRow() {
+    while (objFifo_.size() < 8) objFifo_.push(FIFOPixel{});
+
+    for (int i = 0; i < 8; ++i) {
+        int bit = (objFlags_ & 0x20) ? i : (7 - i);
+        uint8_t color = static_cast<uint8_t>(((objDataHigh_ >> bit) & 1) << 1 |
+                                             ((objDataLow_ >> bit) & 1));
+        if (color == 0) continue;
+
+        FIFOPixel& target = objFifo_.at(i);
+        if (target.isSprite) continue;
+        target.color = color;
+        target.palette = (objFlags_ & 0x10) ? 2 : 1;
+        target.bgPriority = (objFlags_ & 0x80) != 0;
+        target.isSprite = true;
+    }
+}
+
 // ══════════════════════════════════════════════════════════════════════
-// Tile fetcher — runs every 2 dots, feeding the BG/Window FIFO
+// Seven-phase BG/window fetcher. Address and data phases are separate
+// because DMG register writes can affect an in-flight tile fetch.
 // ══════════════════════════════════════════════════════════════════════
 
-void PPU::fetcherTick() {
-    fetcherClock_++;
-    if (fetcherClock_ < 2) return;
-    fetcherClock_ = 0;
+uint8_t PPU::fetcherY() const {
+    return fetcherFetchingWindow_ ? static_cast<uint8_t>(windowY_)
+                                  : static_cast<uint8_t>(ly_ + scy_);
+}
+
+void PPU::advanceFetcher() {
 
     switch (fetcherState_) {
-        case FetcherState::ReadTileID: {
-            uint16_t tileMapBase;
-            int tileX, tileY;
-
-            if (fetcherFetchingWindow_) {
-                tileMapBase = (lcdc_ & 0x40) ? 0x9C00 : 0x9800;
-                tileX = fetcherTileX_;
-                tileY = windowLineCounter_ / 8;
-            } else {
-                tileMapBase = (lcdc_ & 0x08) ? 0x9C00 : 0x9800;
-                tileX = ((scx_ / 8) + fetcherTileX_) & 0x1F;
-                tileY = ((ly_ + scy_) & 0xFF) / 8;
+        case FetcherState::GetTileT1: {
+            if (!(lcdc_ & 0x20)) {
+                windowTriggered_ = false;
+                fetcherFetchingWindow_ = false;
             }
 
-            uint16_t tileMapAddr = tileMapBase + (tileY * 32) + tileX;
-            fetcherTileId_ = vram_[tileMapAddr - 0x8000];
-            fetcherState_ = FetcherState::ReadTileDataLow;
+            uint16_t map = 0x9800;
+            if (fetcherFetchingWindow_) {
+                if (lcdc_ & 0x40) map = 0x9C00;
+            } else if (lcdc_ & 0x08) {
+                map = 0x9C00;
+            }
+
+            uint8_t y = fetcherY();
+            int tileX;
+            if (fetcherFetchingWindow_) {
+                tileX = fetcherWindowTileX_;
+            } else if (fetcherPositionX_ >= -16 && fetcherPositionX_ < -8) {
+                tileX = scx_ >> 3;
+            } else {
+                tileX = (scx_ + fetcherPositionX_ + 8) / 8;
+            }
+            fetcherMapAddr_ = static_cast<uint16_t>(map +
+                ((y >> 3) * 32) + (tileX & 0x1F));
+            fetcherState_ = FetcherState::GetTileT2;
             break;
         }
 
-        case FetcherState::ReadTileDataLow: {
-            int line;
-            if (fetcherFetchingWindow_) {
-                line = windowLineCounter_ % 8;
-            } else {
-                line = (ly_ + scy_) % 8;
-            }
+        case FetcherState::GetTileT2:
+            fetcherTileId_ = vram_[fetcherMapAddr_ - 0x8000];
+            fetcherState_ = FetcherState::GetTileDataLowT1;
+            break;
 
-            uint16_t tileDataBase;
+        case FetcherState::GetTileDataLowT1: {
+            uint16_t base;
             if (lcdc_ & 0x10) {
-                tileDataBase = 0x8000 + (fetcherTileId_ * 16);
+                base = static_cast<uint16_t>(fetcherTileId_ * 16);
             } else {
-                tileDataBase = 0x9000 + (static_cast<int8_t>(fetcherTileId_) * 16);
+                base = static_cast<uint16_t>(0x1000 +
+                    static_cast<int8_t>(fetcherTileId_) * 16);
             }
-
-            fetcherTileDataLow_ = vram_[(tileDataBase + line * 2) - 0x8000];
-            fetcherState_ = FetcherState::ReadTileDataHigh;
+            fetcherDataAddr_ = static_cast<uint16_t>(base +
+                ((fetcherY() & 7) * 2));
+            fetcherState_ = FetcherState::GetTileDataLowT2;
             break;
         }
 
-        case FetcherState::ReadTileDataHigh: {
-            int line;
-            if (fetcherFetchingWindow_) {
-                line = windowLineCounter_ % 8;
-            } else {
-                line = (ly_ + scy_) % 8;
-            }
+        case FetcherState::GetTileDataLowT2:
+            fetcherTileDataLow_ = vram_[fetcherDataAddr_];
+            fetcherState_ = FetcherState::GetTileDataHighT1;
+            break;
 
-            uint16_t tileDataBase;
+        case FetcherState::GetTileDataHighT1: {
+            uint16_t base;
             if (lcdc_ & 0x10) {
-                tileDataBase = 0x8000 + (fetcherTileId_ * 16);
+                base = static_cast<uint16_t>(fetcherTileId_ * 16);
             } else {
-                tileDataBase = 0x9000 + (static_cast<int8_t>(fetcherTileId_) * 16);
+                base = static_cast<uint16_t>(0x1000 +
+                    static_cast<int8_t>(fetcherTileId_) * 16);
             }
-
-            fetcherTileDataHigh_ = vram_[(tileDataBase + line * 2 + 1) - 0x8000];
-            fetcherState_ = FetcherState::PushToFIFO;
+            fetcherDataAddr_ = static_cast<uint16_t>(base +
+                ((fetcherY() & 7) * 2) + 1);
+            fetcherState_ = FetcherState::GetTileDataHighT2;
             break;
         }
 
-        case FetcherState::PushToFIFO: {
-            if (bgFifo_.size() > 0) {
-                // FIFO not empty — stall
-                return;
+        case FetcherState::GetTileDataHighT2:
+            fetcherTileDataHigh_ = vram_[fetcherDataAddr_];
+            if (fetcherFetchingWindow_) {
+                fetcherWindowTileX_ = (fetcherWindowTileX_ + 1) & 31;
+            }
+            fetcherState_ = FetcherState::Push;
+            [[fallthrough]];
+
+        case FetcherState::Push: {
+            if (!bgFifo_.empty()) return;
+
+            if (wyTriggered_ && !(lcdc_ & 0x20) &&
+                !disableWindowPixelInsertionGlitch_) {
+                int logicalPosition = fetcherPositionX_ + 7;
+                if (logicalPosition > 167) logicalPosition = 0;
+                if (static_cast<int>(wx_) == logicalPosition) {
+                    bgFifo_.push(FIFOPixel{});
+                    return;
+                }
             }
 
             for (int bit = 7; bit >= 0; bit--) {
@@ -444,103 +559,72 @@ void PPU::fetcherTick() {
                 bgFifo_.push(p);
             }
 
-            fetcherTileX_++;
-            fetcherState_ = FetcherState::ReadTileID;
+            fetcherState_ = FetcherState::GetTileT1;
             break;
         }
     }
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// Push a pixel from the FIFO to the framebuffer
+// FIFO output and DMG BG/OBJ priority mixing
 // ══════════════════════════════════════════════════════════════════════
 
-void PPU::pushPixel() {
+void PPU::renderPixelIfPossible() {
+    if (currentSpriteIdx_ < lineSpriteCount_ && (lcdc_ & 0x02) &&
+        lineSprites_[currentSpriteIdx_].x == 0) {
+        return;
+    }
     if (bgFifo_.empty()) return;
 
-    // Discard pixels for SCX fine scrolling
-    if (discardPixels_ > 0) {
-        bgFifo_.pop();
-        discardPixels_--;
+    FIFOPixel bg{};
+    if (insertBgPixel_) {
+        insertBgPixel_ = false;
+    } else {
+        bg = bgFifo_.pop();
+    }
+
+    FIFOPixel obj{};
+    if (!objFifo_.empty()) obj = objFifo_.pop();
+
+    if (fetcherPositionX_ >= -16 && fetcherPositionX_ < -8) {
+        if ((fetcherPositionX_ & 7) == (scx_ & 7)) {
+            fetcherPositionX_ = -8;
+        } else if (windowBeingFetched_ && (fetcherPositionX_ & 7) == 6 &&
+                   (scx_ & 7) == 7) {
+            fetcherPositionX_ = -8;
+        } else if (fetcherPositionX_ == -9) {
+            fetcherPositionX_ = -16;
+            return;
+        } else {
+            lineHasFractionalScrolling_ = true;
+        }
+    }
+
+    windowBeingFetched_ = false;
+
+    if (fetcherPositionX_ < 0) {
+        fetcherPositionX_++;
         return;
     }
 
-    FIFOPixel pixel = bgFifo_.pop();
-
     if (pixelX_ < SCREEN_WIDTH && ly_ < SCREEN_HEIGHT) {
-        // BG enable check (LCDC bit 0 on DMG)
-        if (!(lcdc_ & 0x01)) {
-            if (!pixel.isSprite) {
-                pixel.color = 0;
-            }
+        bool bgEnabled = (lcdc_ & 0x01) != 0;
+        uint8_t bgColor = bgEnabled ? bg.color : 0;
+        bool drawObj = obj.isSprite && obj.color != 0 && (lcdc_ & 0x02);
+        if (drawObj && bgColor != 0 && obj.bgPriority && bgEnabled) {
+            drawObj = false;
         }
 
-        uint32_t color;
-        if (pixel.isSprite) {
-            color = applyPalette(pixel.color, pixel.palette);
+        if (drawObj) {
+            framebuffer_[ly_ * SCREEN_WIDTH + pixelX_] =
+                applyPalette(obj.color, obj.palette);
         } else {
-            color = applyPalette(pixel.color, 0);
+            framebuffer_[ly_ * SCREEN_WIDTH + pixelX_] =
+                applyPalette(bgColor, 0);
         }
-
-        framebuffer_[ly_ * SCREEN_WIDTH + pixelX_] = color;
-        pixelX_++;
     }
-}
-
-// ══════════════════════════════════════════════════════════════════════
-// Mix sprite pixel into the BG FIFO
-// ══════════════════════════════════════════════════════════════════════
-
-void PPU::mixSpritePixel(int spriteIdx) {
-    const Sprite& sprite = lineSprites_[spriteIdx];
-
-    int spriteHeight = (lcdc_ & 0x04) ? 16 : 8;
-    int lineInSprite = ly_ - (sprite.y - 16);
-
-    // Y-flip
-    if (sprite.flags & 0x40) {
-        lineInSprite = (spriteHeight - 1) - lineInSprite;
-    }
-
-    uint8_t tileIdx = sprite.tile;
-    if (spriteHeight == 16) {
-        tileIdx &= 0xFE;
-    }
-
-    uint16_t tileAddr = 0x8000 + (tileIdx * 16) + (lineInSprite * 2);
-    uint8_t dataLo = vram_[tileAddr - 0x8000];
-    uint8_t dataHi = vram_[tileAddr + 1 - 0x8000];
-
-    int spriteScreenX = sprite.x - 8;
-    bool bgOverObj = (sprite.flags & 0x80) != 0;
-    uint8_t palNum = (sprite.flags & 0x10) ? 2 : 1;
-
-    for (int bit = 7; bit >= 0; bit--) {
-        int screenX = spriteScreenX + (7 - bit);
-
-        int actualBit = bit;
-        if (sprite.flags & 0x20) {
-            actualBit = 7 - bit;
-        }
-
-        uint8_t colorLo = (dataLo >> actualBit) & 1;
-        uint8_t colorHi = (dataHi >> actualBit) & 1;
-        uint8_t colorIdx = (colorHi << 1) | colorLo;
-
-        if (colorIdx == 0) continue;
-
-        int fifoPos = screenX - pixelX_ + discardPixels_;
-        if (fifoPos < 0 || fifoPos >= bgFifo_.size()) continue;
-
-        FIFOPixel& existing = bgFifo_.at(fifoPos);
-        if (existing.isSprite) continue;
-        if (bgOverObj && existing.color != 0) continue;
-
-        existing.color = colorIdx;
-        existing.palette = palNum;
-        existing.isSprite = true;
-        existing.bgPriority = bgOverObj;
-    }
+    pixelX_++;
+    fetcherPositionX_++;
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -591,7 +675,7 @@ void PPU::updateStatIRQ() {
     // On DMG, this fires at OAM mode start AND briefly pulses at VBlank
     // entry. The pulse is transient — it does NOT hold the line high
     // throughout VBlank, allowing a proper rising edge at LY=0 OAM.
-    if ((stat_ & 0x20) && (mode_ == MODE_OAM || vblankOamPulse_)) line = true;
+    if ((stat_ & 0x20) && (mode_ == MODE_OAM || vblankOamPulse_ || oamStatEarly_)) line = true;
 
     // LYC coincidence interrupt source
     if ((stat_ & 0x40) && (stat_ & 0x04)) line = true;
@@ -651,12 +735,38 @@ uint8_t PPU::readReg(uint16_t addr) const {
 // Register writes (FF40–FF4B)
 // ══════════════════════════════════════════════════════════════════════
 
+uint8_t PPU::beginDMGLCDCWrite(uint8_t val) {
+    uint8_t old = lcdc_;
+
+    // LCDC.1 is sampled independently by FIFO output and object fetching.
+    // A disable at X=0 or during an active fetch reaches that path on the
+    // conflict dot instead of waiting for the final register value.
+    if (!(val & 0x02) && (fetcherPositionX_ == 0 || objFetchActive_)) {
+        old &= static_cast<uint8_t>(~0x02);
+    }
+
+    if ((lcdc_ & 0x20) && !(val & 0x20) && windowBeingFetched_) {
+        disableWindowPixelInsertionGlitch_ = true;
+    }
+
+    // All bits read old on this dot except an asserted BG-enable bit.
+    return static_cast<uint8_t>(old | (val & 0x01));
+}
+
 void PPU::writeReg(uint16_t addr, uint8_t val) {
     switch (addr) {
         case 0xFF40: {
             bool wasOn = lcdc_ & 0x80;
+            uint8_t oldLcdc = lcdc_;
             lcdc_ = val;
             bool isOn = lcdc_ & 0x80;
+
+            if ((oldLcdc & 0x02) && !(val & 0x02) && objFetchActive_) {
+                objFetchActive_ = false;
+            }
+            if (isOn && (val & 0x20) && wy_ == ly_) {
+                wyTriggered_ = true;
+            }
 
             if (wasOn && !isOn) {
                 // LCD turning off
@@ -665,12 +775,17 @@ void PPU::writeReg(uint16_t addr, uint8_t val) {
                 mode_ = MODE_HBLANK;
                 stat_ = (stat_ & 0xFC);
                 lcdWasOff_ = true;
+                wyTriggered_ = false;
+                windowTriggered_ = false;
+                windowY_ = -1;
                 // Coincidence flag is RETAINED (not cleared)
                 // Freeze STAT IRQ line based on retained coincidence flag.
                 statIrqLine_ = ((stat_ & 0x40) && (stat_ & 0x04));
             } else if (!wasOn && isOn) {
                 lcdWasOff_ = true;
                 firstLineAfterEnable_ = true;
+                wyTriggered_ = false;
+                windowY_ = -1;
             }
             break;
         }
@@ -699,8 +814,14 @@ void PPU::writeReg(uint16_t addr, uint8_t val) {
         case 0xFF47: bgp_ = val; break;
         case 0xFF48: obp0_ = val; break;
         case 0xFF49: obp1_ = val; break;
-        case 0xFF4A: wy_ = val; break;
-        case 0xFF4B: wx_ = val; break;
+        case 0xFF4A:
+            wy_ = val;
+            if ((lcdc_ & 0xA0) == 0xA0 && wy_ == ly_) wyTriggered_ = true;
+            break;
+        case 0xFF4B:
+            wx_ = val;
+            if (mode_ == MODE_XFER) wxJustChangedDots_ = 1;
+            break;
     }
 }
 

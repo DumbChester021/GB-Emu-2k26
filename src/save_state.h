@@ -22,7 +22,7 @@ class SaveState {
 public:
     // ── Magic / version ─────────────────────────────────────────────
     static constexpr uint32_t MAGIC   = 0x53534247; // "GBSS" in LE
-    static constexpr uint32_t VERSION = 1;
+    static constexpr uint32_t VERSION = 2;
 
     // ── Write primitives ────────────────────────────────────────────
     template<typename T>
