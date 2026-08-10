@@ -5,7 +5,7 @@
 **SameBoy targets `DMG-CPU-B` exclusively** — it does not emulate DMG-0,
 DMG-A, or DMG-C differently. This project should therefore describe its concrete
 target as DMG-CPU B. The current per-dot rewrite passes **89/94 selected
-Mooneye tests** and **4/24 Mealybug** exact images. Both bundled Blargg OAM
+Mooneye tests** and **5/24 Mealybug** exact images. Both bundled Blargg OAM
 suites still pass 8/8. SameBoy is the oracle for closing the remaining PPU
 edge-ordering gaps; parity is not currently claimed.
 
@@ -86,5 +86,5 @@ For future CGB work:
 
 > [!TIP]
 > **Current selected Mooneye score: 89/94.** Both bundled Blargg OAM corruption
-> suites pass 8/8, while Mealybug is 4/24 exact. See `GAP_ANALYSIS.md` for the
+> suites pass 8/8, while Mealybug is 5/24 exact. See `GAP_ANALYSIS.md` for the
 > live failure list.

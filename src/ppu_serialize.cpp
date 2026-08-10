@@ -24,6 +24,7 @@ void PPU::serialize(SaveState& ss) const {
     ss.write<uint8_t>(mode_);
     ss.write<int32_t>(dotCounter_);
     ss.writeBool(lcdWasOff_);
+    ss.write<int32_t>(lcdEnableDelayDots_);
     ss.writeBool(firstLineAfterEnable_);
     ss.writeBool(firstLineShorter_);
     ss.writeBool(mode0StatDelay_);
@@ -128,6 +129,7 @@ void PPU::deserialize(SaveState& ss) {
     mode_ = ss.read<uint8_t>();
     dotCounter_ = ss.read<int32_t>();
     lcdWasOff_ = ss.readBool();
+    lcdEnableDelayDots_ = ss.read<int32_t>();
     firstLineAfterEnable_ = ss.readBool();
     firstLineShorter_ = ss.readBool();
     mode0StatDelay_ = ss.readBool();

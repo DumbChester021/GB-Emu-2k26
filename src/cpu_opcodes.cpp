@@ -210,10 +210,10 @@ void CPU::op_ld_hl_sp_e8() { // 0xF8 — 12T
 // Push / Pop
 // ══════════════════════════════════════════════════════════════════════
 
-void CPU::op_push_af() { bus_.triggerOAMBug(reg.sp); internalCycle(); pushWord(reg.af); }  // 16T
-void CPU::op_push_bc() { bus_.triggerOAMBug(reg.sp); internalCycle(); pushWord(reg.bc); }
-void CPU::op_push_de() { bus_.triggerOAMBug(reg.sp); internalCycle(); pushWord(reg.de); }
-void CPU::op_push_hl() { bus_.triggerOAMBug(reg.sp); internalCycle(); pushWord(reg.hl); }
+void CPU::op_push_af() { oamBugCycle(reg.sp); pushWord(reg.af); }  // 16T
+void CPU::op_push_bc() { oamBugCycle(reg.sp); pushWord(reg.bc); }
+void CPU::op_push_de() { oamBugCycle(reg.sp); pushWord(reg.de); }
+void CPU::op_push_hl() { oamBugCycle(reg.sp); pushWord(reg.hl); }
 
 void CPU::op_pop_af() { reg.af = popWord(); reg.f &= 0xF0; }  // 12T
 void CPU::op_pop_bc() { reg.bc = popWord(); }
@@ -341,15 +341,15 @@ void CPU::op_dec_hl_ind() { // DEC (HL) — 12T
 // INC/DEC rr = 8T (fetch + internal), ADD HL,rr = 8T (fetch + internal)
 // ══════════════════════════════════════════════════════════════════════
 
-void CPU::op_inc_bc() { bus_.triggerOAMBug(reg.bc); reg.bc++; internalCycle(); }
-void CPU::op_inc_de() { bus_.triggerOAMBug(reg.de); reg.de++; internalCycle(); }
-void CPU::op_inc_hl() { bus_.triggerOAMBug(reg.hl); reg.hl++; internalCycle(); }
-void CPU::op_inc_sp() { bus_.triggerOAMBug(reg.sp); reg.sp++; internalCycle(); }
+void CPU::op_inc_bc() { oamBugCycle(reg.bc); reg.bc++; }
+void CPU::op_inc_de() { oamBugCycle(reg.de); reg.de++; }
+void CPU::op_inc_hl() { oamBugCycle(reg.hl); reg.hl++; }
+void CPU::op_inc_sp() { oamBugCycle(reg.sp); reg.sp++; }
 
-void CPU::op_dec_bc() { bus_.triggerOAMBug(reg.bc); reg.bc--; internalCycle(); }
-void CPU::op_dec_de() { bus_.triggerOAMBug(reg.de); reg.de--; internalCycle(); }
-void CPU::op_dec_hl() { bus_.triggerOAMBug(reg.hl); reg.hl--; internalCycle(); }
-void CPU::op_dec_sp() { bus_.triggerOAMBug(reg.sp); reg.sp--; internalCycle(); }
+void CPU::op_dec_bc() { oamBugCycle(reg.bc); reg.bc--; }
+void CPU::op_dec_de() { oamBugCycle(reg.de); reg.de--; }
+void CPU::op_dec_hl() { oamBugCycle(reg.hl); reg.hl--; }
+void CPU::op_dec_sp() { oamBugCycle(reg.sp); reg.sp--; }
 
 void CPU::op_add_hl_bc() {
     uint32_t r = reg.hl + reg.bc;

@@ -3,7 +3,7 @@
 An **accuracy-focused Game Boy (DMG-CPU B) emulator** written in C++17 with SDL2.
 
 <p align="center">
-  <strong>89/94 selected Mooneye</strong> · <strong>DMG-ACID2 pixel-exact</strong> · <strong>Blargg OAM bug 8/8</strong> · <strong>Mealybug 4/24</strong> · <strong>Full audio</strong> · <strong>Save states</strong>
+  <strong>89/94 selected Mooneye</strong> · <strong>DMG-ACID2 pixel-exact</strong> · <strong>Blargg OAM bug 8/8</strong> · <strong>Mealybug 5/24</strong> · <strong>Full audio</strong> · <strong>Save states</strong>
 </p>
 
 ---
@@ -12,7 +12,7 @@ An **accuracy-focused Game Boy (DMG-CPU B) emulator** written in C++17 with SDL2
 
 | Feature | Status |
 |---------|--------|
-| **CPU** - All opcodes including CB-prefix, HALT, interrupts | M-cycle timed; sub-M-cycle bus phasing remains |
+| **CPU** - All opcodes including CB-prefix, HALT, interrupts | Explicit pending-cycle scheduler with DMG I/O conflict phases |
 | **PPU** - Separate BG/OBJ FIFOs and progressive sprite evaluation | Per-dot hardware pipeline; transition and edge-conflict timing remains in progress |
 | **APU** - All 4 channels: Pulse x2, Wave, Noise | T-cycle accurate with SDL2 audio |
 | **Timer** - DIV/TIMA with falling-edge detection | T-cycle accurate |
@@ -73,12 +73,13 @@ non-PPU categories pass; the PPU category is 7/12. Run via
 > the external-RAM result protocol as completion. `halt_bug` renders "Passed" on
 > its LCD output. `cgb_sound` is CGB-only and excluded from DMG testing.
 
-### Mealybug Tearoom - 4/24
+### Mealybug Tearoom - 5/24
 
-Exact image comparison currently passes `m2_win_en_toggle`, `m3_wx_4_change`,
-`m3_wx_4_change_sprites`, and `m3_wx_5_change`. The remaining 20 tests expose
-sub-dot CPU/PPU write ordering and window/OBJ edge cases still under active
-development. Run via `bash run_mealybug.sh`.
+Exact image comparison currently passes `m2_win_en_toggle`,
+`m3_scx_low_3_bits`, `m3_wx_4_change`, `m3_wx_4_change_sprites`, and
+`m3_wx_5_change`. The remaining 19 tests expose PPU consumption-edge and
+window/OBJ fetch cases still under active development. Run via
+`bash run_mealybug.sh`.
 
 ### DMG-ACID2 - Passing
 
@@ -163,8 +164,8 @@ make -j$(nproc)
 ```
 +------------------------------------------------------+
 |                      CPU (SM83)                       |
-|            M-cycle accurate (4 T-cycles)             |
-|    readByte -> bus.read -> tick4  (read-before-tick)  |
+|        Pending T-cycle bus-phase scheduler            |
+|  DMG I/O conflicts + five-M-cycle interrupt entry     |
 +---------------------------+--------------------------+
                             |
                             v

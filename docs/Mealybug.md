@@ -1,6 +1,6 @@
 # Mealybug Tearoom Tests — DMG Compliance
 
-> **Current Score: 4/24 DMG-blob tests passing** (hardware rewrite in progress)
+> **Current Score: 5/24 DMG-blob tests passing** (hardware rewrite in progress)
 > **Last Updated:** 2026-08-11
 
 ---
@@ -26,19 +26,21 @@ replaced. The current implementation now has:
 - dynamic SCX/SCY, tile-map, tile-select, object-size, and palette sampling;
 - WY/WX latches, internal window Y, reactivation pixels, and WX write state;
 - one-dot DMG palette conflicts and multi-phase LCDC conflicts.
+- an SM83 pending-cycle scheduler for early/late DMG register bus phases;
+- the two-dot DMG LCD-enable start delay and five-cycle interrupt entry phases.
 
 This is a structural hardware model rather than a screenshot-specific offset
 table. Temporary regressions are accepted while its edge ordering is completed.
 
 ## Measured Snapshot
 
-Fresh `bash run_mealybug.sh` output on 2026-08-11 is **4/24**. During
+Fresh `bash run_mealybug.sh` output on 2026-08-11 is **5/24**. During
 development, compensating Mode-2/startup offsets reached 16/24, but those
 offsets contradicted the measured one-dot Mode-2 interrupt lead and were removed.
 
 The remaining work is concentrated in:
 
-- CPU/PPU ordering within an SM83 M-cycle for SCX, SCY, palettes, LCDC, and WX;
+- PPU consumption ordering for SCY, palettes, LCDC, and WX after their CPU bus edges;
 - the same-dot WX=6 comparator/write race;
 - exact first-line LCD-enable and HBlank transition timing;
 - OBJ fetch termination/abort edges and grouped-sprite penalties.
@@ -66,6 +68,7 @@ one T-cycle.
 | Test | Status |
 |------|--------|
 | `m2_win_en_toggle` | ✅ Pass |
+| `m3_scx_low_3_bits` | ✅ Pass |
 | `m3_wx_4_change` | ✅ Pass |
 | `m3_wx_4_change_sprites` | ✅ Pass |
 | `m3_wx_5_change` | ✅ Pass |

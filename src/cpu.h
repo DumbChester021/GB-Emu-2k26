@@ -18,7 +18,7 @@ class CPU {
 public:
     explicit CPU(MemoryBus& bus);
 
-    // Advance the CPU by exactly 1 T-cycle. Returns true if still running.
+    // Execute one instruction or one halted CPU slice.
     bool tick();
 
     // Check if CPU hit an unimplemented opcode or is stopped
@@ -56,6 +56,7 @@ private:
 
     // ── State machine ────────────────────────────────────────────────
     uint64_t totalCycles_ = 0;  // Total T-cycles elapsed
+    int pendingCycles_ = 0;     // Deferred T-cycles since the last bus edge
 
     // Current opcode being executed
     uint8_t currentOpcode_ = 0;
@@ -73,10 +74,13 @@ private:
     bool haltBug_ = false;       // HALT bug: PC not incremented on next fetch
 
     // ── Timing helpers ───────────────────────────────────────────────
-    void tick4();                // tick bus 4 times, add 4 to totalCycles_
-    void internalCycle();        // 4T internal delay (no memory access)
+    void advanceCycles(int cycles);
+    void flushPendingCycles();
+    void tick4();                // complete pending work, then idle for 4T
+    void internalCycle();        // append one 4T no-access machine cycle
+    void oamBugCycle(uint16_t addr);
 
-    // ── Memory helpers (each ticks the bus for 4 T-cycles) ──────────
+    // ── Memory helpers (one M-cycle, with register-specific edges) ──
     uint8_t  readByte(uint16_t addr);
     void     writeByte(uint16_t addr, uint8_t val);
     uint8_t  fetchByte();        // read at PC, then PC++
@@ -103,7 +107,7 @@ private:
     void executeCBOpcode();
 
     // ── Interrupt handling ───────────────────────────────────────────
-    void handleInterrupts();
+    bool handleInterrupts(bool effectiveIme);
 
     // ── Opcode implementations ───────────────────────────────────────
 

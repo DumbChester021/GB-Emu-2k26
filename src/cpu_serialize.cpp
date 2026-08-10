@@ -16,6 +16,7 @@ void CPU::serialize(SaveState& ss) const {
 
     // Cycle counter
     ss.write<uint64_t>(totalCycles_);
+    ss.write<int32_t>(pendingCycles_);
 
     // Opcode state
     ss.write<uint8_t>(currentOpcode_);
@@ -43,6 +44,7 @@ void CPU::deserialize(SaveState& ss) {
 
     // Cycle counter
     totalCycles_ = ss.read<uint64_t>();
+    pendingCycles_ = ss.read<int32_t>();
 
     // Opcode state
     currentOpcode_ = ss.read<uint8_t>();

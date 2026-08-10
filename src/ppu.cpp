@@ -31,10 +31,18 @@ void PPU::tick() {
         // set when LCD was turned off (in writeReg). This prevents
         // spurious rising edges when LCD is re-enabled.
         lcdWasOff_ = true;
+        lcdEnableDelayDots_ = 2;
         return;
     }
 
-    // LCD just turned on — single dead tick for initialization
+    // On DMG the PPU state machine starts two dots after LCDC.7 reaches it.
+    // Access blocking and LY progression remain inactive during this delay.
+    if (lcdWasOff_ && lcdEnableDelayDots_ > 0) {
+        lcdEnableDelayDots_--;
+        return;
+    }
+
+    // LCD just turned on — initialize the first-line state.
     if (lcdWasOff_) {
         lcdWasOff_ = false;
         ly_ = 0;
@@ -775,6 +783,7 @@ void PPU::writeReg(uint16_t addr, uint8_t val) {
                 mode_ = MODE_HBLANK;
                 stat_ = (stat_ & 0xFC);
                 lcdWasOff_ = true;
+                lcdEnableDelayDots_ = 2;
                 wyTriggered_ = false;
                 windowTriggered_ = false;
                 windowY_ = -1;
@@ -783,6 +792,7 @@ void PPU::writeReg(uint16_t addr, uint8_t val) {
                 statIrqLine_ = ((stat_ & 0x40) && (stat_ & 0x04));
             } else if (!wasOn && isOn) {
                 lcdWasOff_ = true;
+                lcdEnableDelayDots_ = 2;
                 firstLineAfterEnable_ = true;
                 wyTriggered_ = false;
                 windowY_ = -1;
@@ -792,11 +802,7 @@ void PPU::writeReg(uint16_t addr, uint8_t val) {
         case 0xFF41:
             // Bits 0-2 are read-only (mode + coincidence flag)
             stat_ = (stat_ & 0x07) | (val & 0x78);
-            // DMG STAT write glitch: spurious interrupt if line was low
             if (lcdc_ & 0x80) {
-                if (!statIrqLine_ && (val & 0x78)) {
-                    if (ifReg_) *ifReg_ |= 0x02;
-                }
                 updateStatIRQ();
             }
             break;

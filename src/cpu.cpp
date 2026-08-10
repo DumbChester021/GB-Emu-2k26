@@ -1,5 +1,6 @@
 #include "cpu.h"
 #include "memory_bus.h"
+#include <cassert>
 #include <cstdio>
 #include <cstring>
 
@@ -35,15 +36,31 @@ CPU::CPU(MemoryBus& bus) : bus_(bus) {
 // Timing helpers
 // ══════════════════════════════════════════════════════════════════════
 
-void CPU::tick4() {
-    for (int i = 0; i < 4; i++) {
+void CPU::advanceCycles(int cycles) {
+    for (int i = 0; i < cycles; i++) {
         bus_.tick();
         totalCycles_++;
     }
 }
 
+void CPU::flushPendingCycles() {
+    advanceCycles(pendingCycles_);
+    pendingCycles_ = 0;
+}
+
+void CPU::tick4() {
+    flushPendingCycles();
+    advanceCycles(4);
+}
+
 void CPU::internalCycle() {
-    tick4();
+    pendingCycles_ += 4;
+}
+
+void CPU::oamBugCycle(uint16_t addr) {
+    flushPendingCycles();
+    bus_.triggerOAMBug(addr);
+    pendingCycles_ = 4;
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -53,19 +70,27 @@ void CPU::internalCycle() {
 bool CPU::tick() {
     if (unimplemented_) return false;
 
-    // Check interrupts at the start of each instruction cycle
-    handleInterrupts();
-    if (halted_) {
-        tick4();
-        return true;
-    }
+    // Every externally visible instruction boundary follows the final T-cycle
+    // of the previous instruction. Pending cycles normally reach zero at the
+    // end of tick(); flushing here also makes restored mid-cycle states safe.
+    flushPendingCycles();
 
-    // Handle pending EI: delayed by one instruction.
-    // Applied AFTER interrupt check but BEFORE fetch, so the instruction
-    // after EI runs fully before any interrupt can fire.
+    // EI changes the stored IME state here, but interrupt arbitration for this
+    // boundary still uses the value sampled before the delayed transition.
+    bool effectiveIme = ime_;
     if (imeScheduled_) {
         ime_ = true;
         imeScheduled_ = false;
+    }
+
+    if (handleInterrupts(effectiveIme)) {
+        flushPendingCycles();
+        return true;
+    }
+
+    if (halted_) {
+        tick4();
+        return true;
     }
 
     // Fetch & execute
@@ -78,6 +103,11 @@ bool CPU::tick() {
     }
 
     executeOpcode();
+
+    // Keep sub-M-cycle scheduling internal to this instruction. Devices and
+    // interrupt inputs must reach the real instruction boundary before the
+    // caller observes CPU state or starts the next instruction.
+    flushPendingCycles();
 
     return !unimplemented_;
 }
@@ -131,8 +161,9 @@ void CPU::executeCBOpcode() {
 // ══════════════════════════════════════════════════════════════════════
 
 uint8_t CPU::readByte(uint16_t addr) {
+    flushPendingCycles();
     uint8_t val = bus_.read(addr);
-    tick4();
+    pendingCycles_ = 4;
     return val;
 }
 
@@ -141,14 +172,14 @@ void CPU::writeByte(uint16_t addr, uint8_t val) {
     // dot, most bits retain their old state; a newly asserted BG-enable bit is
     // already visible. OBJ/window have additional fetcher-side behavior.
     if (addr == 0xFF40) {
+        assert(pendingCycles_ >= 2);
+        int beforeConflict = pendingCycles_ - 2;
+        advanceCycles(beforeConflict);
+        pendingCycles_ = 0;
         bus_.write(addr, bus_.ppu().beginDMGLCDCWrite(val));
-        bus_.tick();
-        totalCycles_++;
+        advanceCycles(1);
         bus_.write(addr, val);
-        for (int i = 0; i < 3; ++i) {
-            bus_.tick();
-            totalCycles_++;
-        }
+        pendingCycles_ = 5;
         return;
     }
 
@@ -156,19 +187,71 @@ void CPU::writeByte(uint16_t addr, uint8_t val) {
     // a write, old and new bits are both visible; the requested value wins on
     // the following dot. The M-cycle remains exactly four T-cycles long.
     if (addr >= 0xFF47 && addr <= 0xFF49) {
+        assert(pendingCycles_ >= 2);
+        int beforeConflict = pendingCycles_ - 2;
+        advanceCycles(beforeConflict);
+        pendingCycles_ = 0;
         uint8_t old = bus_.read(addr);
         bus_.write(addr, static_cast<uint8_t>(old | val));
-        bus_.tick();
-        totalCycles_++;
+        advanceCycles(1);
         bus_.write(addr, val);
-        for (int i = 0; i < 3; ++i) {
-            bus_.tick();
-            totalCycles_++;
-        }
+        pendingCycles_ = 5;
         return;
     }
+
+    // SCY consumers observe the new value one dot before an ordinary write.
+    if (addr == 0xFF42) {
+        assert(pendingCycles_ >= 1);
+        int beforeWrite = pendingCycles_ - 1;
+        advanceCycles(beforeWrite);
+        pendingCycles_ = 0;
+        bus_.write(addr, val);
+        pendingCycles_ = 5;
+        return;
+    }
+
+    // The DMG SCX path is two dots early relative to a normal write cycle.
+    if (addr == 0xFF43) {
+        assert(pendingCycles_ >= 2);
+        int beforeWrite = pendingCycles_ - 2;
+        advanceCycles(beforeWrite);
+        pendingCycles_ = 0;
+        bus_.write(addr, val);
+        pendingCycles_ = 6;
+        return;
+    }
+
+    // The DMG STAT write bug drives all interrupt enables high for one dot.
+    if (addr == 0xFF41) {
+        flushPendingCycles();
+        bus_.write(addr, 0xFF);
+        advanceCycles(1);
+        bus_.write(addr, val);
+        pendingCycles_ = 3;
+        return;
+    }
+
+    // WX changes at the normal bus edge and marks the following comparator dot.
+    if (addr == 0xFF4B) {
+        flushPendingCycles();
+        bus_.write(addr, val);
+        advanceCycles(1);
+        pendingCycles_ = 3;
+        return;
+    }
+
+    // A CPU write wins the shared IF bus one dot after a normal write edge.
+    if (addr == 0xFF0F) {
+        flushPendingCycles();
+        advanceCycles(1);
+        bus_.write(addr, val);
+        pendingCycles_ = 3;
+        return;
+    }
+
+    flushPendingCycles();
     bus_.write(addr, val);
-    tick4();
+    pendingCycles_ = 4;
 }
 
 uint8_t CPU::fetchByte() {
@@ -407,48 +490,62 @@ void CPU::cb_bit(int bit, uint8_t val) {
 // Interrupt handling
 // ══════════════════════════════════════════════════════════════════════
 
-void CPU::handleInterrupts() {
+bool CPU::handleInterrupts(bool effectiveIme) {
     uint8_t ifReg = bus_.read(0xFF0F);
     uint8_t ieReg = bus_.read(0xFFFF);
     uint8_t pending = ifReg & ieReg & 0x1F;
-
-
-
 
     if (pending != 0) {
         // Any pending interrupt wakes from HALT, even with IME=0
         halted_ = false;
     }
 
-    if (!ime_ || pending == 0) return;
+    if (!effectiveIme || pending == 0) return false;
 
     ime_ = false;
 
-    // Two internal wait cycles
-    internalCycle();  // 4T
-    internalCycle();  // 4T
+    // M1: the CPU performs a discarded opcode read.
+    readByte(reg.pc);
+    reg.pc++;
 
-    // Push high byte of PC (SP decrements first, then writes)
+    // M2/M3: PC appears on the address bus for one cycle, followed by an
+    // internal cycle. These phases can trigger the DMG OAM corruption bug.
+    oamBugCycle(reg.pc);
+    reg.pc--;
+    bus_.triggerOAMBug(reg.sp);
+    internalCycle();
+
+    // M4: push the high byte. An SP wrap can change IE and therefore which
+    // interrupt is ultimately selected.
     reg.sp--;
-    writeByte(reg.sp, (reg.pc >> 8) & 0xFF);  // 4T
+    writeByte(reg.sp, (reg.pc >> 8) & 0xFF);
+    uint8_t interruptQueue = bus_.read(0xFFFF);
 
-    // Re-read IE after the high-byte push — the push itself may have
-    // written to 0xFFFF (if SP was 0x0000, the write targets IE).
-    ieReg = bus_.read(0xFFFF);
-    pending = ifReg & ieReg & 0x1F;
-
-    // Push low byte of PC
+    // M5: push the low byte. If that write lands on IF, arbitration uses the
+    // old IF value from the write edge, just as on the shared hardware bus.
     reg.sp--;
-    writeByte(reg.sp, reg.pc & 0xFF);  // 4T
+    if (reg.sp == 0xFF0F) {
+        flushPendingCycles();
+        uint8_t oldIf = bus_.read(0xFF0F) & 0x1F;
+        bus_.write(0xFF0F, reg.pc & 0xFF);
+        pendingCycles_ = 4;
+        interruptQueue &= oldIf;
+    } else {
+        writeByte(reg.sp, reg.pc & 0xFF);
+        interruptQueue &= bus_.read(0xFF0F) & 0x1F;
+    }
 
-    if (pending == 0) {
-        // Dispatch cancelled — no matching interrupt after IE change.
-        // PC goes to 0x0000, IF is NOT modified.
+    if (interruptQueue == 0) {
         reg.pc = 0x0000;
     } else {
-        // Service highest-priority interrupt from the refreshed pending set
+        // The selected IF bit is acknowledged two dots before the end of M5.
+        assert(pendingCycles_ >= 2);
+        pendingCycles_ -= 2;
+        flushPendingCycles();
+        pendingCycles_ = 2;
+
         for (int i = 0; i < 5; i++) {
-            if (pending & (1 << i)) {
+            if (interruptQueue & (1 << i)) {
                 bus_.write(0xFF0F, bus_.read(0xFF0F) & ~(1 << i));
                 reg.pc = 0x0040 + (i * 8);
                 break;
@@ -456,5 +553,5 @@ void CPU::handleInterrupts() {
         }
     }
 
-    internalCycle();  // 4T — set PC to vector
+    return true;
 }

@@ -4,7 +4,7 @@
 > **Target: hardware-accurate DMG-CPU B pipeline; temporary regressions are tracked**
 > **DMG-ACID2: PASSING** ✅
 > **Blargg: CPU/timing/APU/HALT and OAM bug suites pass** ✅
-> **Mealybug Tearoom: 4/24 exact** ⚠️
+> **Mealybug Tearoom: 5/24 exact** ⚠️
 > **Last Verified: 2026-08-11 (rebuilt and executed from current code)**
 
 ---
@@ -39,7 +39,7 @@
 | Blargg halt_bug | 1 | 1 | ✅ Perfect |
 | Blargg oam_bug | 8 | 8 | ✅ Perfect |
 | Blargg oam_bug-2 | 8 | 8 | ✅ Perfect |
-| Mealybug Tearoom | 4 | 24 | ⚠️ 20 exact image comparisons fail |
+| Mealybug Tearoom | 5 | 24 | ⚠️ 19 exact image comparisons fail |
 
 > [!NOTE]
 > `cpu_instrs`, `instr_timing`, and the original `mem_timing` print passing
@@ -61,8 +61,9 @@ currently exposes these remaining gaps:
 - Mooneye PPU: `hblank_ly_scx_timing-GS`, `intr_1_2_timing-GS`,
   `intr_2_mode0_timing_sprites`, `lcdon_timing-GS`, and
   `lcdon_write_timing-GS` fail.
-- Mealybug Tearoom: 20/24 fail. The exact passes are `m2_win_en_toggle`,
-  `m3_wx_4_change`, `m3_wx_4_change_sprites`, and `m3_wx_5_change`.
+- Mealybug Tearoom: 19/24 fail. The exact passes are `m2_win_en_toggle`,
+  `m3_scx_low_3_bits`, `m3_wx_4_change`, `m3_wx_4_change_sprites`, and
+  `m3_wx_5_change`.
 - MBC3 RTC is unimplemented and has not passed `rtc3test`.
 
 ---
@@ -82,6 +83,7 @@ currently exposes these remaining gaps:
 | 9 | **Boot SCLK Align** | `boot_sclk_align-dmgABCmgb` | ✅ Pass |
 | 10 | **SCX fine-scroll pipeline** | Mealybug SCX effects | ⚠️ Synthetic M-cycle rounding removed |
 | 11 | **DMG-B OAM corruption** | Blargg `oam_bug`, `oam_bug-2` | ✅ Both 8/8 |
+| 12 | **SM83 bus-phase scheduler** | EI/DI, HALT, timer, interrupt entry, DMG I/O conflicts | ✅ Core timing categories pass |
 
 ---
 
@@ -124,8 +126,9 @@ Only boot ROM and APU wave behavior differ between DMG revisions. Everything els
 
 > [!TIP]
 > **Next accuracy target: finish edge ordering around the new mode-3 pipeline.**
-> The real OBJ FIFO/fetcher is now present. Align CPU register conflicts,
-> HBlank/Mode-2 interrupt edges, LCD-enable startup, and the WX=6 comparator,
+> The real OBJ FIFO/fetcher and CPU bus-phase scheduler are now present. Align
+> PPU consumption edges, HBlank/Mode-2 transitions, first-line access windows,
+> and the WX=6 comparator,
 > then drive both Mooneye and Mealybug back upward without restoring synthetic
 > penalty formulas.
 
@@ -171,5 +174,6 @@ The [DMG-ACID2](https://github.com/mattcurrie/dmg-acid2) test validates correct 
 
 ### Not Yet Implemented
 - **MBC3 RTC**: Real-Time Clock registers stubbed (Pokémon GSC time features)
-- **Mode-3 edge timing**: 20/24 Mealybug tests fail exact comparison
-- **CPU/PPU sub-M-cycle ordering**: several register writes are still sampled on the wrong edge
+- **Mode-3 edge timing**: 19/24 Mealybug tests fail exact comparison
+- **PPU consumption edges**: several register changes reach the fetch/output
+  pipeline on the wrong dot despite their explicit CPU bus phases

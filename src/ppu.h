@@ -33,6 +33,7 @@ public:
         wy_   = 0x00;  wx_   = 0x00;
         mode_ = MODE_HBLANK;
         lcdWasOff_ = true;
+        lcdEnableDelayDots_ = 2;
         dotCounter_ = 0;
         vblankLine_ = 0;
         statIrqLine_ = false;
@@ -141,6 +142,7 @@ private:
     int dotCounter_ = 0;       // T-cycle counter within current scanline (0–455)
     int vblankLine_ = 0;       // VBlank line counter (0–9, for LY=153 early reset quirk)
     bool lcdWasOff_ = false;   // Tracks LCD just-enabled state
+    int lcdEnableDelayDots_ = 0; // DMG PPU begins two dots after LCDC enable
     bool firstLineAfterEnable_ = false; // Line 0 after LCD enable has special timing
     bool mode0StatDelay_ = false;       // 1-dot delay for Mode 0 STAT IRQ (DMG behavior)
     bool firstLineShorter_ = false;     // First line after LCD enable is 448 dots (not 456)

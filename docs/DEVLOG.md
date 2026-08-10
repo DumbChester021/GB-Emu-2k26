@@ -5,7 +5,7 @@
 
 > [!IMPORTANT]
 > The 2026-08-11 per-dot PPU rewrite intentionally replaced synthetic Mode-3
-> penalty formulas. Current measured status is 89/94 selected Mooneye and 4/24
+> penalty formulas. Current measured status is 89/94 selected Mooneye and 5/24
 > Mealybug. Older 94/94 entries below are historical snapshots, not the current
 > result.
 
@@ -26,9 +26,9 @@
 ## Project Overview
 
 An **accuracy-focused Game Boy (DMG-CPU B) emulator** written in C++17 with
-SDL2 for display and audio. The implementation advances the CPU in M-cycles
-and the PPU/APU in T-cycles, but sub-M-cycle bus phasing and mode-3 OBJ fetch
-behavior are not yet hardware accurate.
+SDL2 for display and audio. The implementation advances the PPU/APU in T-cycles
+and uses an explicit pending-cycle SM83 scheduler for sub-M-cycle bus phases.
+Mode-3 consumption edges and OBJ fetch behavior remain incomplete.
 
 ### Goals
 - Pass all relevant Mooneye test suite ROMs for DMG hardware
@@ -66,13 +66,13 @@ behavior are not yet hardware accurate.
 ## Architecture
 
 ### CPU (`cpu.cpp`, `cpu.h`)
-- **M-cycle accurate**: Each instruction consumes the correct number of M-cycles
-- `readByte(addr)` → `bus_.read(addr)` THEN `tick4()` (read-before-tick ordering)
-- `writeByte(addr, val)` → `bus_.write(addr, val)` THEN `tick4()`
-- **IMPORTANT**: The read/write-before-tick ordering was deliberately chosen. The CPU latches bus data at the beginning of the M-cycle, before PPU state changes within that same M-cycle take effect. This is critical for passing polling-based PPU timing tests like `intr_2_mode3_timing`.
-- `tick4()` calls `bus_.tick()` 4 times, advancing the PPU by 4 dots
-- `handleInterrupts()` runs at the start of each instruction, before fetch
-- EI has a 1-instruction delay (applied after interrupt check, before fetch)
+- **T-cycle bus scheduling**: memory edges leave deferred cycles that later
+  accesses consume, allowing DMG register conflicts inside an M-cycle
+- DMG-specific phases cover LCDC, STAT, SCX, SCY, WX, IF, and palette writes
+- pending cycles are flushed before the caller observes an instruction boundary
+- interrupt entry models the discarded opcode read, PC/SP address phases, stack
+  writes, and IF acknowledgement across the hardware five-M-cycle sequence
+- EI arbitration uses the IME value sampled before its delayed transition
 - HALT wakes on ANY pending interrupt (IF & IE), even with IME=0
 
 ### PPU (`ppu.cpp`, `ppu.h`)
@@ -215,14 +215,39 @@ current `--blargg` runner returns timeout for them because it only recognizes th
 external-RAM completion protocol. `halt_bug` renders "Passed". cgb_sound is
 CGB-only and excluded.
 
-#### Mealybug Tearoom: **4/24 PASSING** ⚠️
+#### Mealybug Tearoom: **5/24 PASSING** ⚠️
 
-Fresh exact-image comparison passes `m2_win_en_toggle`, `m3_wx_4_change`,
-`m3_wx_4_change_sprites`, and `m3_wx_5_change`. The other 20 tests remain.
+Fresh exact-image comparison passes `m2_win_en_toggle`,
+`m3_scx_low_3_bits`, `m3_wx_4_change`, `m3_wx_4_change_sprites`, and
+`m3_wx_5_change`. The other 19 tests remain.
 
 ---
 
 ## Critical Fixes — Hard Problems Solved
+
+### Fix 12: SM83 bus phases and LCD-enable start (2026-08-11)
+
+Replaced immediate whole-M-cycle accesses with a pending-cycle scheduler based
+on the DMG-B conflict map:
+
+- ordinary accesses retain their four-T-cycle interval while LCDC, STAT, SCX,
+  SCY, WX, IF, and palette writes occur at their individual internal phases;
+- pending work is flushed at every externally visible instruction boundary;
+- interrupt entry now performs its discarded read, PC/SP address-bus cycles,
+  stack writes, and IF acknowledgement on the correct dots;
+- LCD enable includes the two-dot DMG PPU start delay required by the boot,
+  LCD-on, and OAM-corruption timing measurements;
+- save-state version 3 stores both CPU pending cycles and the LCD start delay.
+
+**Impact:** all non-PPU Mooneye categories remain perfect, including EI/DI,
+HALT, timer, boot DIV/HWIO, serial alignment, and interrupt timing. Both Blargg
+OAM suites remain 8/8, `dmg_sound` remains 12/12, DMG-ACID2 remains pixel exact,
+and Mealybug moves to 5/24 with a hardware-derived pass set.
+
+**Files:** `cpu.cpp/.h`, `cpu_opcodes.cpp`, `cpu_serialize.cpp`, `ppu.cpp/.h`,
+`ppu_serialize.cpp`, `save_state.h`
+
+---
 
 ### Fix 11: DMG-B OAM corruption (2026-08-10)
 
@@ -510,7 +535,7 @@ The test has 4 rounds:
 ### PPU — ⚠️ Per-Dot Hardware Rewrite In Progress
 
 - ⚠️ 7/12 selected Mooneye PPU tests pass; overall score is 89/94.
-- ⚠️ Mealybug Tearoom is 4/24 exact; real BG/OBJ FIFOs are present, but edge ordering remains incomplete.
+- ⚠️ Mealybug Tearoom is 5/24 exact; real BG/OBJ FIFOs are present, but edge ordering remains incomplete.
 - ✅ Blargg OAM corruption is 8/8 in both copies of the suite.
 
 ### APU — ✅ Implemented
@@ -548,8 +573,9 @@ All boot and serial tests now pass: `boot_regs-dmgABC`, `boot_div-dmgABCmgb`, `b
 
 ### Not Yet Implemented
 - **MBC3 RTC**: Real-Time Clock registers stubbed to 0 (time features in Pokémon GSC don't work)
-- **Sub-M-cycle bus accuracy**: CPU reads at T3 of M-cycle, not T0 or T4
-- **Mode-3 edge ordering**: 20/24 Mealybug tests currently fail exact comparison
+- **CPU read-latch refinement**: register-specific write phases are explicit;
+  the ordinary read sampling edge still needs transistor-level validation
+- **Mode-3 edge ordering**: 19/24 Mealybug tests currently fail exact comparison
 - **CGB (Game Boy Color)**: See SameBoy Variant Research below for CGB model roadmap
 
 ---
@@ -577,27 +603,32 @@ prev_line = combined_line
 ```
 This means writing to STAT register can cause or suppress interrupts, and multiple sources share one line (so enabling mode 0 while in mode 0 fires immediately only if line was previously low).
 
-### Mode 3 Duration Formula
-```
-mode3_dots = 172 + (SCX % 8) + sprite_penalties
-```
-Where `sprite_penalties` per unique X group = `max(0, 5 - (X + SCX) % 8)` alignment (shared) + `6 × count` per sprite. Sprites at X ≥ 168 are free. ✅ IMPLEMENTED.
+### Mode 3 Duration
+
+Mode 3 no longer uses a duration formula. Its end is produced by the BG/OBJ
+FIFOs: SCX discard consumes output dots, each object starts only when its X
+position reaches the fetcher, and a six-dot object fetch pauses BG progress.
+HBlank begins when 160 visible pixels have actually left the FIFO.
 
 ### Interrupt Dispatch Timing
 ```
-handleInterrupts() reads IF                → 0T
-  internalCycle() (2x)                    → 8T  
-  pushWord(PC)                            → 8T (2 writes × 4T)
-  internalCycle() (set PC to vector)      → 4T
-Total dispatch cost:                        20T (5 M-cycles)
+discarded opcode read                       → M1
+PC address/OAM-bug phase                    → M2
+SP address/internal phase                   → M3
+push PC high                                → M4
+push PC low; acknowledge IF at T18          → M5
+Total dispatch cost:                          20T
 ```
 
 ### CPU Read/Write Bus Ordering
 ```
-readByte(addr):  val = bus_.read(addr) → tick4() → return val
-writeByte(addr): bus_.write(addr, val) → tick4()
+readByte(addr):  flush pending → sample bus → defer 4T
+ordinary write: flush pending → drive bus → defer 4T
+special write:  advance to register-specific edge → drive/transient → defer remainder
 ```
-The bus access happens BEFORE the 4 PPU dots advance. This is the "read-before-tick" model. The CPU sees PPU state from the start of the M-cycle. This is critical for passing STAT polling tests.
+The deferred interval lets consecutive accesses keep normal M-cycle spacing
+while exposing register-specific edges to the per-dot PPU. The interval is
+always flushed before an instruction boundary is returned to the main loop.
 
 ---
 
@@ -609,7 +640,7 @@ When debugging timing, add conditional traces in `CPU::tick()`:
 static int traceCount = 0;
 static bool traceActive = false;
 bool wasHalted = halted_;
-handleInterrupts();
+handleInterrupts(effectiveIme);
 // Activate on HALT wakeup when only STAT is enabled
 if (wasHalted && !halted_ && bus_.read(0xFFFF) == 0x02) {
     traceActive = true;
