@@ -1,14 +1,15 @@
-# GB-Emu-2k26 — Gap Analysis for Mooneye Compliance
+# GB-Emu-2k26 — DMG Accuracy Gap Analysis
 
 > **Current Score: 94/94 DMG-ABC tests passing** ✅
-> **Target: All Mooneye DMG tests (94/94) — ACHIEVED**
+> **Target: Selected Mooneye DMG tests (94/94) — ACHIEVED**
 > **DMG-ACID2: PASSING** ✅
-> **Blargg: ALL DMG SUITES PASSING (cpu_instrs, dmg_sound, instr_timing, mem_timing, halt_bug, oam_bug)** ✅
-> **Last Updated: 2026-02-22**
+> **Blargg: CPU/timing/APU/HALT and OAM bug suites pass** ✅
+> **Mealybug Tearoom: 1/24** ❌
+> **Last Verified: 2026-08-10 (rebuilt and executed from current code)**
 
 ---
 
-## Current Test Results (2026-02-22)
+## Current Test Results (2026-08-10)
 
 | Category | Pass | Total | Status |
 |----------|------|-------|--------|
@@ -36,20 +37,28 @@
 | Blargg mem_timing | 3 | 3 | ✅ Perfect |
 | Blargg mem_timing-2 | 3 | 3 | ✅ Perfect |
 | Blargg halt_bug | 1 | 1 | ✅ Perfect |
-| Blargg oam_bug | 8 | 8 | ✅ Same as SameBoy* |
-| Blargg oam_bug-2 | 8 | 8 | ✅ Same as SameBoy* |
+| Blargg oam_bug | 8 | 8 | ✅ Perfect |
+| Blargg oam_bug-2 | 8 | 8 | ✅ Perfect |
+| Mealybug Tearoom | 1 | 24 | ❌ 23 mode-3 image comparisons fail |
 
 > [!NOTE]
-> \*oam_bug tests do not print "Passed" on screen, but produce identical results to SameBoy DMG-B. cgb_sound is CGB-only and excluded.
+> `cpu_instrs`, `instr_timing`, and the original `mem_timing` print passing
+> results over serial; the current headless runner nevertheless returns timeout
+> because it only recognizes the external-RAM completion protocol. `halt_bug`
+> was verified from its rendered "Passed" result. cgb_sound is CGB-only.
 
 > [!NOTE]
 > DMG-0 and SGB/MGB-only variant tests are excluded from this count. We target DMG-B (same as SameBoy). See [SameBoy Cross-Reference](#sameboy-cross-reference) section below.
 
 ---
 
-## Failing Tests — None 🎉
+## Failing Tests
 
-All 94 Mooneye DMG-ABC tests pass. No remaining failures.
+The selected 94 Mooneye DMG-ABC tests and current Blargg DMG suites pass, but
+broader accuracy tests still expose gaps:
+
+- Mealybug Tearoom: 23/24 fail; only `m2_win_en_toggle` passes.
+- MBC3 RTC is unimplemented and has not passed `rtc3test`.
 
 ---
 
@@ -67,18 +76,20 @@ All 94 Mooneye DMG-ABC tests pass. No remaining failures.
 | 8 | **Boot HWIO** | `boot_hwio-dmgABCmgb` | ✅ Pass |
 | 9 | **Boot SCLK Align** | `boot_sclk_align-dmgABCmgb` | ✅ Pass |
 | 10 | **SCX M-cycle alignment** | `hblank_ly_scx_timing-GS` | ✅ Pass |
+| 11 | **DMG-B OAM corruption** | Blargg `oam_bug`, `oam_bug-2` | ✅ Both 8/8 |
 
 ---
 
 ## SameBoy Cross-Reference
 
-All previously failing tests now pass. SameBoy DMG-B passes all 94 — we match SameBoy's compliance.
+All previously failing tests in the selected Mooneye set now pass. This matches
+SameBoy on that 94-test subset only; it does not imply equal overall accuracy.
 
 ### Variant Confirmation
 
 SameBoy **only implements `GB_MODEL_DMG_B`** (source: [`Core/model.h`](https://github.com/LIJI32/SameBoy/blob/master/Core/model.h)). DMG-0, DMG-A, DMG-C are commented out. SameBoy passes **all 94 Mooneye DMG acceptance tests** we run.
 
-**We now match SameBoy's perfect 94/94 score.**
+**We match SameBoy's 94/94 score on this selected Mooneye set.**
 
 ### DMG Revision Differences (for reference)
 
@@ -106,11 +117,14 @@ Only boot ROM and APU wave behavior differ between DMG revisions. Everything els
 ## What to Tackle Next
 
 > [!TIP]
-> **All 94/94 Mooneye tests pass — perfect compliance achieved!** 🎉
-> Future work can focus on CGB support, additional game compatibility, or performance optimization.
+> **Next accuracy target: mode-3 PPU behavior.** Preserve 94/94 Mooneye while
+> implementing sub-M-cycle CPU bus phasing and a real OBJ fetch/FIFO pipeline,
+> then drive Mealybug from 1/24 to 24/24.
 
 > [!NOTE]
-> **APU is fully implemented**: Hardware-accurate DMG APU with all 4 channels, frame sequencer, stereo mixing, and SDL2 audio output. **Blargg `dmg_sound` 12/12 passing** — all tests match SameBoy output.
+> **APU is implemented and Blargg `dmg_sound` is verified at 12/12.** Broader
+> SameSuite and hardware-output validation is still needed before claiming full
+> APU hardware accuracy.
 
 ---
 
@@ -119,7 +133,7 @@ Only boot ROM and APU wave behavior differ between DMG revisions. Everything els
 | Fix | Description | Games Affected |
 |-----|-------------|----------------|
 | WX < 7 clipping | Clips `(7 - WX)` pixels when window starts at left edge | Games using WX=0–6 |
-| MBC3 bank 0 | Removed incorrect 0→1 fixup (MBC3 allows bank 0) | Pokémon GSC, MBC3 titles |
+| MBC3 bank 0 (known bug) | Current code maps a written bank 0 to bank 0; hardware remaps it to bank 1 | MBC3 titles |
 | HALT bug | Already implemented — PC double-read with IME=0 | Pokémon Yellow, edge cases |
 | Window discard fix | SCX fine-scroll discard no longer bleeds into Window layer | Zelda: Link's Awakening HUD jitter |
 | Window line counter fix | Counter only increments when window actually renders (not just LY >= WY) | DMG-ACID2 chin, games using WX mid-frame |
@@ -149,4 +163,5 @@ The [DMG-ACID2](https://github.com/mattcurrie/dmg-acid2) test validates correct 
 
 ### Not Yet Implemented
 - **MBC3 RTC**: Real-Time Clock registers stubbed (Pokémon GSC time features)
-- **Sprite FIFO fetch pausing**: Pipeline doesn't pause at sprite X (correct total timing, minor rendering edge cases)
+- **Mode-3 fetch timing**: 23/24 Mealybug tests fail
+- **Sprite FIFO fetch pausing**: Pipeline does not perform real dot-timed OBJ fetches

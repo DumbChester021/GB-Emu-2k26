@@ -2,7 +2,11 @@
 
 ## TL;DR
 
-**SameBoy targets `DMG-CPU-B` exclusively** — it does not emulate DMG-0, DMG-A, or DMG-C differently. Your emulator targets DMG-ABC which is compatible. **All 94 Mooneye tests now pass — matching SameBoy's perfect score.**
+**SameBoy targets `DMG-CPU-B` exclusively** — it does not emulate DMG-0,
+DMG-A, or DMG-C differently. This project should therefore describe its concrete
+target as DMG-CPU B. **All 94 selected Mooneye tests pass, matching SameBoy on
+that subset. Both bundled Blargg OAM suites also pass 8/8; Mealybug mode-3
+tests remain the clearest broader accuracy gap.**
 
 ---
 
@@ -45,7 +49,7 @@ typedef enum {
 > [!NOTE]
 > The key differences between DMG variants are only in the **boot ROM** and **APU wave channel behavior**. CPU timing, PPU timing, timer behavior, and memory bus behavior are the same across all DMG revisions.
 
-## Test Status — All Passing ✅
+## Selected Mooneye Cross-Reference — All Passing ✅
 
 ### ✓ `hblank_ly_scx_timing-GS` (PPU) — ✅ NOW PASSING
 
@@ -78,4 +82,7 @@ For future CGB work:
 | `-S` | SGB+SGB2 | Super Game Boy family |
 
 > [!TIP]
-> **Full Mooneye compliance achieved: 94/94 DMG-ABC tests pass**, matching SameBoy DMG-B.
+> **Selected Mooneye set: 94/94 DMG-ABC tests pass**, matching SameBoy DMG-B on
+> this set. Both bundled Blargg OAM corruption suites also pass 8/8. This is
+> still not a claim of full emulator parity: Mealybug remains 1/24 as documented
+> in `GAP_ANALYSIS.md`.

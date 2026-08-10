@@ -1,9 +1,9 @@
 # GB-Emu-2k26
 
-A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2.
+An **accuracy-focused Game Boy (DMG-CPU B) emulator** written in C++17 with SDL2.
 
 <p align="center">
-  <strong>94/94 Mooneye</strong> · <strong>DMG-ACID2 passing</strong> · <strong>Blargg all passing</strong> · <strong>Full audio</strong> · <strong>Save states</strong> · <strong>~7,800 LOC</strong>
+  <strong>94/94 selected Mooneye</strong> · <strong>DMG-ACID2 passing</strong> · <strong>Blargg OAM bug 8/8</strong> · <strong>Mealybug 1/24</strong> · <strong>Full audio</strong> · <strong>Save states</strong>
 </p>
 
 ---
@@ -12,8 +12,8 @@ A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2.
 
 | Feature | Status |
 |---------|--------|
-| **CPU** - All opcodes including CB-prefix, HALT, interrupts | M-cycle accurate |
-| **PPU** - Pixel FIFO, sprite evaluation, all mode timings | T-cycle (per-dot) accurate |
+| **CPU** - All opcodes including CB-prefix, HALT, interrupts | M-cycle timed; sub-M-cycle bus phasing remains |
+| **PPU** - BG pixel FIFO and sprite evaluation | Dot-stepped; mode 3/OBJ fetch timing remains incomplete |
 | **APU** - All 4 channels: Pulse x2, Wave, Noise | T-cycle accurate with SDL2 audio |
 | **Timer** - DIV/TIMA with falling-edge detection | T-cycle accurate |
 | **MBC** - MBC1, MBC2, MBC3 (no RTC), MBC5 | Full bank switching |
@@ -25,6 +25,8 @@ A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2.
 ---
 
 ## Test Results
+
+Results below were rebuilt and measured from the current code on **2026-08-10**.
 
 ### Mooneye Test Suite - 94/94 DMG-ABC
 
@@ -51,7 +53,7 @@ All 94 Mooneye DMG-ABC acceptance tests pass. Run via `bash run_mooneye_all.sh`.
 | MBC2 | 7/7 | Perfect |
 | MBC5 | 8/8 | Perfect |
 
-### Blargg Tests - All DMG Suites Passing
+### Blargg Tests - Passing DMG suites
 
 | Suite | Tests | Status | Notes |
 |-------|-------|--------|-------|
@@ -61,11 +63,19 @@ All 94 Mooneye DMG-ABC acceptance tests pass. Run via `bash run_mooneye_all.sh`.
 | mem_timing-2 | 3/3 | Pass | Same tests, alternate ROM format |
 | dmg_sound | 12/12 | Pass | All APU channel and register tests |
 | halt_bug | 1/1 | Pass | HALT with pending interrupt, IME=0 |
-| oam_bug | 8/8 | Pass* | Same results as SameBoy DMG-B |
-| oam_bug-2 | 8/8 | Pass* | Same results as SameBoy DMG-B |
+| oam_bug | 8/8 | Pass | DMG-B corruption causes, timing, and patterns |
+| oam_bug-2 | 8/8 | Pass | Duplicate suite also verified |
 
-> \*oam_bug tests do not print "Passed" on screen, but produce identical results to SameBoy.
-> cgb_sound is CGB-only and excluded from DMG testing.
+> `cpu_instrs`, `instr_timing`, and the original `mem_timing` report success over
+> serial, but the current `--blargg` runner returns timeout because it only treats
+> the external-RAM result protocol as completion. `halt_bug` renders "Passed" on
+> its LCD output. `cgb_sound` is CGB-only and excluded from DMG testing.
+
+### Mealybug Tearoom - 1/24
+
+Only `m2_win_en_toggle` passes exact image comparison. The 23 mode-3 tests fail,
+showing that mid-scanline register effects and BG/window/OBJ fetch timing are not
+yet cycle accurate. Run via `bash run_mealybug.sh`.
 
 ### DMG-ACID2 - Passing
 

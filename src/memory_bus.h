@@ -21,8 +21,12 @@ public:
     bool loadBootrom(const std::string& path);
     bool bootromActive() const { return bootromActive_; }
 
-    uint8_t  read(uint16_t addr) const;
+    uint8_t  read(uint16_t addr);
     void     write(uint16_t addr, uint8_t val);
+
+    // The SM83 16-bit increment/decrement unit exposes its operand on the
+    // address bus, which can corrupt OAM on monochrome hardware.
+    void triggerOAMBug(uint16_t addr) { ppu_.triggerOAMWriteCorruption(addr); }
 
     // Call once per T-cycle to advance internal timers (LY, serial, etc.)
     void tick();

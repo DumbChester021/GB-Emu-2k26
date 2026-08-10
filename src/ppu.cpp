@@ -757,6 +757,133 @@ void PPU::writeOAM(uint16_t addr, uint8_t val) {
 // OAM DMA write — bypasses mode blocking
 // ══════════════════════════════════════════════════════════════════════
 
+// The OAM scanner uses one 8-byte row per M-cycle. In this PPU's timing
+// representation, mode-2 dots 4-79 correspond to corruptible rows 1-19.
+int PPU::accessedOAMRow() const {
+    if (!(lcdc_ & 0x80) || mode_ != MODE_OAM) return -1;
+    if (dotCounter_ < 4 || dotCounter_ >= OAM_DOTS + 4) return -1;
+    // This PPU enters mode 2 at dot 4, after the hardware's initial row-0
+    // access. Thus its first mode-2 M-cycle corresponds to row 1.
+    return (dotCounter_ / 4) * 8;
+}
+
+uint16_t PPU::readOAMWord(int offset) const {
+    return static_cast<uint16_t>(oam_[offset]) |
+           (static_cast<uint16_t>(oam_[offset + 1]) << 8);
+}
+
+void PPU::writeOAMWord(int offset, uint16_t value) {
+    oam_[offset] = static_cast<uint8_t>(value);
+    oam_[offset + 1] = static_cast<uint8_t>(value >> 8);
+}
+
+static uint16_t oamWriteGlitch(uint16_t a, uint16_t b, uint16_t c) {
+    return ((a ^ c) & (b ^ c)) ^ c;
+}
+
+static uint16_t oamReadGlitch(uint16_t a, uint16_t b, uint16_t c) {
+    return b | (a & c);
+}
+
+static uint16_t oamSecondaryReadGlitch(uint16_t a, uint16_t b,
+                                       uint16_t c, uint16_t d) {
+    return (b & (a | c | d)) | (a & c & d);
+}
+
+static uint16_t oamTertiaryReadGlitch1(uint16_t a, uint16_t b,
+                                      uint16_t c, uint16_t d, uint16_t e) {
+    return c | (a & b & d & e);
+}
+
+static uint16_t oamTertiaryReadGlitch2(uint16_t a, uint16_t b,
+                                      uint16_t c, uint16_t d, uint16_t e) {
+    return (c & (a | b | d | e)) | (a & b & d & e);
+}
+
+static uint16_t oamTertiaryReadGlitch3(uint16_t a, uint16_t b,
+                                      uint16_t c, uint16_t d, uint16_t e) {
+    return (c & (a | b | d | e)) | (b & d & e);
+}
+
+static uint16_t oamQuaternaryReadGlitchDMG(uint16_t b, uint16_t c,
+                                           uint16_t d, uint16_t e,
+                                           uint16_t f, uint16_t g,
+                                           uint16_t h) {
+    return (e & (h | g | (~d & f) | c | b)) | (c & g & h);
+}
+
+void PPU::triggerOAMWriteCorruption(uint16_t addr) {
+    if (addr < 0xFE00 || addr >= 0xFF00) return;
+
+    const int row = accessedOAMRow();
+    if (row < 8 || row > 0x98) return;
+
+    writeOAMWord(row, oamWriteGlitch(readOAMWord(row),
+                                     readOAMWord(row - 8),
+                                     readOAMWord(row - 4)));
+    for (int i = 2; i < 8; ++i) {
+        oam_[row + i] = oam_[row - 8 + i];
+    }
+}
+
+void PPU::triggerOAMReadCorruption(uint16_t addr) {
+    if (addr < 0xFE00 || addr >= 0xFF00) return;
+
+    const int row = accessedOAMRow();
+    if (row < 8 || row > 0x98) return;
+
+    if ((row & 0x18) == 0x10) {
+        if (row < 0x98) {
+            writeOAMWord(row - 8,
+                oamSecondaryReadGlitch(readOAMWord(row - 16),
+                                       readOAMWord(row - 8),
+                                       readOAMWord(row),
+                                       readOAMWord(row - 4)));
+            for (int i = 0; i < 8; ++i) {
+                oam_[row - 16 + i] = oam_[row - 8 + i];
+            }
+        }
+    } else if ((row & 0x18) == 0) {
+        if (row < 0x98) {
+            uint16_t value;
+            if (row == 0x40) {
+                value = oamQuaternaryReadGlitchDMG(
+                    readOAMWord(row), readOAMWord(row - 4),
+                    readOAMWord(row - 6), readOAMWord(row - 8),
+                    readOAMWord(row - 14), readOAMWord(row - 16),
+                    readOAMWord(row - 32));
+            } else {
+                const uint16_t a = readOAMWord(row);
+                const uint16_t b = readOAMWord(row - 4);
+                const uint16_t c = readOAMWord(row - 8);
+                const uint16_t d = readOAMWord(row - 16);
+                const uint16_t e = readOAMWord(row - 32);
+                if (row == 0x20) value = oamTertiaryReadGlitch2(a, b, c, d, e);
+                else if (row == 0x60) value = oamTertiaryReadGlitch3(a, b, c, d, e);
+                else value = oamTertiaryReadGlitch1(a, b, c, d, e);
+            }
+            writeOAMWord(row - 8, value);
+            for (int i = 0; i < 8; ++i) {
+                oam_[row - 16 + i] = oam_[row - 8 + i];
+                oam_[row - 32 + i] = oam_[row - 8 + i];
+            }
+        }
+    } else {
+        const uint16_t value = oamReadGlitch(readOAMWord(row),
+                                             readOAMWord(row - 8),
+                                             readOAMWord(row - 4));
+        writeOAMWord(row - 8, value);
+        writeOAMWord(row, value);
+    }
+
+    for (int i = 0; i < 8; ++i) {
+        oam_[row + i] = oam_[row - 8 + i];
+    }
+    if (row == 0x80) {
+        for (int i = 0; i < 8; ++i) oam_[i] = oam_[row + i];
+    }
+}
+
 void PPU::dmaWriteOAM(uint8_t index, uint8_t val) {
     if (index < 0xA0) {
         oam_[index] = val;

@@ -64,6 +64,10 @@ public:
     uint8_t readOAM(uint16_t addr) const;
     void    writeOAM(uint16_t addr, uint8_t val);
 
+    // DMG OAM corruption caused by CPU address-bus activity in mode 2.
+    void triggerOAMWriteCorruption(uint16_t addr);
+    void triggerOAMReadCorruption(uint16_t addr);
+
     // ── OAM DMA: bypasses mode blocking ─────────────────────────────
     void dmaWriteOAM(uint8_t index, uint8_t val);
 
@@ -234,6 +238,10 @@ private:
     void fetcherTick();
     void pushPixel();
     void mixSpritePixel(int spriteIdx);
+
+    int accessedOAMRow() const;
+    uint16_t readOAMWord(int offset) const;
+    void writeOAMWord(int offset, uint16_t value);
 
     void setMode(uint8_t newMode);
     void checkLYC();

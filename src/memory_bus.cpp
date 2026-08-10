@@ -137,7 +137,7 @@ static uint8_t ioReadMask(uint8_t reg) {
 // read()
 // ══════════════════════════════════════════════════════════════════════
 
-uint8_t MemoryBus::read(uint16_t addr) const {
+uint8_t MemoryBus::read(uint16_t addr) {
     // ── OAM DMA bus conflict ────────────────────────────────────────
     // During active DMA (past startup delay), the DMA controller owns
     // one of the external buses. CPU reads from the same bus get the
@@ -185,6 +185,7 @@ uint8_t MemoryBus::read(uint16_t addr) const {
 
     // ── OAM (0xFE00–0xFE9F) — delegated to PPU ──────────────────────
     if (addr < 0xFEA0) {
+        ppu_.triggerOAMReadCorruption(addr);
         // During OAM DMA (past startup delay), CPU reads from OAM return 0xFF
         if (dmaActive_ && (dmaDelay_ == 0 || dmaRestarting_)) return 0xFF;
         return ppu_.readOAM(addr);
@@ -192,6 +193,7 @@ uint8_t MemoryBus::read(uint16_t addr) const {
 
     // ── Unusable (0xFEA0–0xFEFF) ─────────────────────────────────────
     if (addr < 0xFF00) {
+        ppu_.triggerOAMReadCorruption(addr);
         return 0x00;  // DMG: unusable OAM region reads as 0x00
     }
 
@@ -280,6 +282,7 @@ void MemoryBus::write(uint16_t addr, uint8_t val) {
 
     // ── OAM (0xFE00–0xFE9F) — delegated to PPU ──────────────────────
     if (addr < 0xFEA0) {
+        ppu_.triggerOAMWriteCorruption(addr);
         // During OAM DMA, CPU writes to OAM are ignored
         if (dmaActive_) return;
         ppu_.writeOAM(addr, val);
@@ -288,6 +291,7 @@ void MemoryBus::write(uint16_t addr, uint8_t val) {
 
     // ── Unusable (0xFEA0–0xFEFF) ─────────────────────────────────────
     if (addr < 0xFF00) {
+        ppu_.triggerOAMWriteCorruption(addr);
         return;
     }
 

@@ -1,6 +1,6 @@
 # GB-Emu-2k26 — Development Log & Architecture Reference
 
-> **Last Updated:** 2026-02-22  
+> **Last Updated:** 2026-08-10
 > **Purpose:** Capture all development context, architecture decisions, hard-won bug fixes, and remaining work so future sessions can continue efficiently without re-discovering past findings.
 
 ---
@@ -19,13 +19,16 @@
 
 ## Project Overview
 
-A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2 for display and audio. The emulator targets M-cycle (4 T-cycle) accuracy for the CPU, per-dot (1 T-cycle) accuracy for the PPU, and T-cycle accuracy for the APU.
+An **accuracy-focused Game Boy (DMG-CPU B) emulator** written in C++17 with
+SDL2 for display and audio. The implementation advances the CPU in M-cycles
+and the PPU/APU in T-cycles, but sub-M-cycle bus phasing and mode-3 OBJ fetch
+behavior are not yet hardware accurate.
 
 ### Goals
 - Pass all relevant Mooneye test suite ROMs for DMG hardware
 - Accurate CPU instruction timing (M-cycle level)
 - Accurate PPU timing (per-dot / T-cycle level with FIFO pixel pipeline)
-- Hardware-accurate APU with all 4 audio channels and SDL2 audio output
+- T-cycle-stepped APU with all 4 audio channels and SDL2 audio output
 - Play commercial Game Boy games correctly (with sound)
 
 ### Source Files (~7,800 LOC total)
@@ -146,7 +149,7 @@ A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2 for disp
 
 ## Test Results Summary
 
-### Mooneye Test Suite (mts-20240926) — As of 2026-02-22
+### Mooneye Test Suite (mts-20240926) — Verified 2026-08-10
 
 **Grand Total: 94/94 DMG-ABC tests passing**
 
@@ -187,7 +190,7 @@ A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2 for disp
 | `stat_lyc_onoff` | ✅ PASS | Fixed by STAT IRQ line LCD toggle fix |
 | `vblank_stat_intr-GS` | ✅ PASS | |
 
-#### Blargg Tests: **ALL DMG SUITES PASSING** ✅
+#### Blargg Tests: **DMG SUITES PASSING** ✅
 
 | Suite | Tests | Status | Notes |
 |-------|-------|--------|-------|
@@ -197,14 +200,43 @@ A **cycle-accurate Game Boy (DMG) emulator** written in C++17 with SDL2 for disp
 | mem_timing-2 | 3/3 | ✅ Pass | Same tests, alternate ROM format |
 | dmg_sound | 12/12 | ✅ Pass | All APU channel and register tests |
 | halt_bug | 1/1 | ✅ Pass | HALT with pending interrupt, IME=0 |
-| oam_bug | 8/8 | ✅ Pass* | Same results as SameBoy DMG-B |
-| oam_bug-2 | 8/8 | ✅ Pass* | Same results as SameBoy DMG-B |
+| oam_bug | 8/8 | ✅ Pass | Causes, timing window, and exact patterns |
+| oam_bug-2 | 8/8 | ✅ Pass | Duplicate suite also verified |
 
-*oam_bug tests do not print "Passed" but produce identical results to SameBoy. cgb_sound is CGB-only and excluded.
+The CPU/timing suites that use serial output print passing results, although the
+current `--blargg` runner returns timeout for them because it only recognizes the
+external-RAM completion protocol. `halt_bug` renders "Passed". cgb_sound is
+CGB-only and excluded.
+
+#### Mealybug Tearoom: **1/24 PASSING** ❌
+
+Fresh exact-image comparison passes only `m2_win_en_toggle`. All 23 mode-3 tests
+fail, confirming that register-write and BG/window/OBJ fetch effects are not yet
+dot accurate.
 
 ---
 
 ## Critical Fixes — Hard Problems Solved
+
+### Fix 11: DMG-B OAM corruption (2026-08-10)
+
+Implemented the mode-2 OAM corruption caused by CPU address-bus activity:
+
+- CPU 16-bit `INC`/`DEC` operations expose BC, DE, HL, or SP through the IDU.
+- Blocked reads and writes in `$FE00–$FEFF` trigger the appropriate corruption.
+- `PUSH` includes its initial SP IDU cycle; `POP` and `LD A,(HL+/-)` are covered
+  by their blocked reads.
+- The PPU maps each mode-2 M-cycle to its active 8-byte OAM row and applies the
+  DMG-B write/read bitwise patterns without changing instruction cycle counts.
+
+**Impact:** Both bundled Blargg OAM suites improved from 3/8 to **8/8**. The
+first/last corruption timing tests and exact instruction-pattern CRCs pass.
+Mooneye remains 94/94, Mealybug remains 1/24 with identical diffs, and
+DMG-ACID2 remains pixel-identical to the reference.
+
+**Files:** `cpu_opcodes.cpp`, `memory_bus.cpp/.h`, `ppu.cpp/.h`
+
+---
 
 ### Fix 1: VBlank OAM Pulse (`intr_1_2_timing-GS`)
 
@@ -469,13 +501,18 @@ The test has 4 rounds:
 
 ## Known Issues & Remaining Work
 
-### PPU — ✅ All Passing
+### PPU — ⚠️ Mooneye Passing, Mode-3 Accuracy Incomplete
 
-- ✅ All 12 PPU tests pass, including `hblank_ly_scx_timing-GS` (fixed by SCX M-cycle alignment penalty — C++ negative modulo bug in `(4 - scxFine) % 4` was producing wrong values for SCX%8 ≥ 5).
+- ✅ All 12 selected Mooneye PPU tests pass, including `hblank_ly_scx_timing-GS`.
+- ❌ Mealybug Tearoom is 1/24; mid-mode-3 register effects and real OBJ fetch/FIFO timing remain incomplete.
+- ✅ Blargg OAM corruption is 8/8 in both copies of the suite.
 
 ### APU — ✅ Implemented
 
-Full DMG APU with all 4 channels, frame sequencer, register I/O, stereo mixing, and SDL2 audio output. **Hardware-accurate** with DMG edge cases (sweep negate quirk, extra length clocking, wave RAM conflicts, DAC enable logic). **Blargg `dmg_sound` 12/12 passing** — all tests match SameBoy output.
+Full DMG APU with all 4 channels, frame sequencer, register I/O, stereo mixing,
+and SDL2 audio output. Blargg `dmg_sound` is freshly verified at 12/12. Broader
+SameSuite and hardware-output validation has not yet been performed, so this is
+not treated as proof of complete APU hardware accuracy.
 
 ### Boot/Serial — ✅ All Passing
 
@@ -494,7 +531,7 @@ All boot and serial tests now pass: `boot_regs-dmgABC`, `boot_div-dmgABCmgb`, `b
 - ✅ **Window discard fix**: SCX fine-scroll discard no longer bleeds into Window layer. Fixes jittering HUD in Zelda: Link's Awakening during BG scrolling.
 - ✅ **Window line counter fix**: Counter only increments when the window actually renders on a scanline (`windowTriggered_`), not merely when `LY >= WY`. Per Pan Docs and SameBoy source (`display.c:1913`), if WX is set offscreen, the counter does not advance. Previous implementation with `windowWYCondition_` broke DMG-ACID2's chin rendering (WX set offscreen between eye and chin).
 - ✅ **WX < 7 clipping**: When window triggers with `WX < 7`, the first `(7 - WX)` pixels of the window tile are properly clipped. Fixes window positioning for games using WX=0–6.
-- ✅ **MBC3 bank 0**: Removed incorrect 0→1 bank fixup from `MBC3Controller::write()`. MBC3 allows bank 0 in the high bank (0x4000–0x7FFF), unlike MBC1. Fixes potential bank mapping errors in Pokémon Gold/Silver/Crystal and other MBC3 games.
+- ❌ **MBC3 bank 0 regression**: Current code allows bank 0 in the switchable region. Hardware remaps a written bank value of 0 to bank 1; this must be restored.
 - ✅ **HALT bug**: Already implemented — `haltBug_` flag causes PC to not increment on next fetch when HALT wakes with `IME=0`.
 - ✅ **DMG-ACID2**: All visual elements render correctly — objects, background, window, palettes, tile addressing, OBJ priority, 8×16 sprites, sprite flipping, and LCDC bit 0 behavior.
 - ✅ **DMA VRAM bypass**: OAM DMA reads VRAM directly via `directReadVRAM()`, bypassing PPU mode 3 blocking. The DMA controller operates on the VRAM bus independently.
@@ -506,6 +543,7 @@ All boot and serial tests now pass: `boot_regs-dmgABC`, `boot_div-dmgABCmgb`, `b
 ### Not Yet Implemented
 - **MBC3 RTC**: Real-Time Clock registers stubbed to 0 (time features in Pokémon GSC don't work)
 - **Sub-M-cycle bus accuracy**: CPU reads at T3 of M-cycle, not T0 or T4
+- **Mode-3 OBJ fetch/FIFO timing**: 23/24 Mealybug tests currently fail
 - **CGB (Game Boy Color)**: See SameBoy Variant Research below for CGB model roadmap
 
 ---
@@ -717,4 +755,3 @@ When ready for CGB support:
 - Mooneye has CGB-specific tests in `misc/` directory
 - Universal acceptance tests (no suffix) should still pass on CGB
 - SameBoy's model enum uses family masks: `GB_MODEL_DMG_FAMILY = 0x000`, `GB_MODEL_CGB_FAMILY = 0x200`
-
